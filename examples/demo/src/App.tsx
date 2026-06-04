@@ -13,6 +13,7 @@ import {
 } from '@timeline/react';
 import { demoData } from './fixture';
 import { makeSynthetic, type DemoDatum } from './synthetic';
+import { makeAmlScenario } from './scenario';
 
 const LAYOUT_NAMES = ['byFirstEvent', 'barycenter', 'explicit'] as const;
 type LayoutName = (typeof LAYOUT_NAMES)[number];
@@ -51,8 +52,10 @@ const lightTheme: Partial<Theme> = {
   },
 };
 
-/** Five-colour palette for the data-driven style resolvers. */
-const PALETTE = ['#e06c75', '#98c379', '#61afef', '#c678dd', '#e5c07b'];
+/** Five-colour palette for the data-driven style resolvers. Bucket 0 is a muted
+ * grey so AML-scenario background activity recedes and tagged patterns pop
+ * (buckets 1–4 map to the four patterns); the other datasets use 0–4 as before. */
+const PALETTE = ['#6b7280', '#98c379', '#61afef', '#c678dd', '#e5c07b'];
 
 /** Maps a `DemoDatum` category bucket to a palette colour (data-driven, §11).
  * Both datasets carry the payload, so the resolvers read it directly; an absent
@@ -62,13 +65,21 @@ function paletteColor(category = 0): string {
 }
 
 /** Short human label for the status bar (mirrors the default tooltip content). */
-function describeHit(hit: HitResult | null): string {
+function describeHit(hit: HitResult<DemoDatum> | null): string {
   if (hit === null) return '—';
   switch (hit.kind) {
-    case 'event':
-      return `event ${hit.event.id} (${hit.event.sourceId} → ${hit.event.targetId})`;
-    case 'element':
-      return `element ${hit.element.id}`;
+    case 'event': {
+      const p = hit.event.data?.pattern;
+      const route = `${hit.event.sourceId} → ${hit.event.targetId}`;
+      return `event ${hit.event.id} (${route})${p ? ` ⚠ ${p}` : ''}`;
+    }
+    case 'element': {
+      const k = hit.element.data?.kind;
+      const p = hit.element.data?.pattern;
+      return `element ${hit.element.id}${k ? ` [${k}]` : ''}${
+        p ? ` ⚠ ${p}` : ''
+      }`;
+    }
     case 'cluster':
       return `${hit.count} events`;
   }
@@ -82,22 +93,29 @@ function describeHit(hit: HitResult | null): string {
  * Underneath: the temporal index culls by binary search, dense events collapse
  * into "×N" cluster markers, and per-event labels appear past the LOD threshold.
  * "Fit" reframes; "10k"/"50k" swap in synthetic datasets (drag to pan, ctrl/⌘+
- * wheel to zoom).
+ * wheel to zoom). "AML" swaps in a ~100-entity client/counterparty scenario with
+ * four labelled transaction-monitoring patterns (structuring, circular,
+ * pass-through, fan-out); enable "colours" to paint each flow by its pattern and
+ * hover a "⚠" row/arrow to see the pattern named in the status bar.
  */
 export function App() {
   const ref = useRef<TimelineHandle<DemoDatum>>(null);
   const [big, setBig] = useState(false);
   const [huge, setHuge] = useState(false);
+  const [aml, setAml] = useState(false);
   const [layoutName, setLayoutName] = useState<LayoutName>('byFirstEvent');
   const [themed, setThemed] = useState(false);
   const [coloured, setColoured] = useState(false);
   const [labelled, setLabelled] = useState(false);
-  const [hover, setHover] = useState<HitResult | null>(null);
+  const [hover, setHover] = useState<HitResult<DemoDatum> | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [viewport, setViewport] = useState({ pxPerMs: 0, scrollY: 0 });
 
   // Stable callbacks so the engine isn't re-created on every render (§12).
-  const onHover = useCallback((hit: HitResult | null) => setHover(hit), []);
+  const onHover = useCallback(
+    (hit: HitResult<DemoDatum> | null) => setHover(hit),
+    [],
+  );
   const onSelectionChange = useCallback(
     (ids: string[]) => setSelected(ids),
     [],
@@ -147,7 +165,10 @@ export function App() {
     () => (huge ? makeSynthetic(50_000, 400, 2) : null),
     [huge],
   );
-  const data = synthetic50k ?? (big ? synthetic : demoData);
+  const amlData = useMemo(() => makeAmlScenario(), []);
+  const data = aml
+    ? amlData
+    : (synthetic50k ?? (big ? synthetic : demoData));
 
   return (
     <main
@@ -191,6 +212,14 @@ export function App() {
           style={{ font: '12px system-ui' }}
         >
           {huge ? 'Sample' : '50k'}
+        </button>
+        <button
+          type="button"
+          data-testid="toggle-aml"
+          onClick={() => setAml((v) => !v)}
+          style={{ font: '12px system-ui' }}
+        >
+          {aml ? 'AML ✓' : 'AML'}
         </button>
         <button
           type="button"
