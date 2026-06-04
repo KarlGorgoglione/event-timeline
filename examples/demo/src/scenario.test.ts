@@ -82,3 +82,18 @@ describe('makeAmlScenario — pass-through', () => {
     expect(outAmt / inAmt).toBeLessThanOrEqual(1);
   });
 });
+
+describe('makeAmlScenario — fan-out', () => {
+  it('sends from one source to many distinct targets', () => {
+    const { events } = makeAmlScenario();
+    const fan = events.filter((e) => e.id.startsWith('fan-'));
+    expect(fan).toHaveLength(10);
+
+    const sources = new Set(fan.map((e) => e.sourceId));
+    expect(sources.size).toBe(1);
+    const targets = new Set(fan.map((e) => e.targetId));
+    expect(targets.size).toBe(10);
+
+    for (const e of fan) expect(e.data?.pattern).toBe('fanout');
+  });
+});

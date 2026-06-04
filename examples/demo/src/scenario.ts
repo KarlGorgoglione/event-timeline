@@ -213,6 +213,33 @@ function addPassthrough(
   }
 }
 
+/**
+ * Fan-out / dispersal: one entity sends to ~10 counterparties within a day or
+ * two (one-to-many dispersal).
+ */
+function addFanout(
+  elements: TimelineElement<DemoDatum>[],
+  events: TimelineEvent<DemoDatum>[],
+  pools: Pools,
+  rand: () => number,
+): void {
+  const disperser = pools.clients[6]!;
+  flagActor(elements, disperser, '⚠ Disperser', 'fanout');
+  const targets = [...pools.cash.slice(0, 5), ...pools.external.slice(14, 19)];
+  const base = START + 250 * DAY_MS;
+  for (let i = 0; i < targets.length; i++) {
+    const amount = 5_000 + Math.floor(rand() * 20_000);
+    events.push({
+      id: `fan-${i}`,
+      sourceId: disperser,
+      targetId: targets[i]!,
+      time: base + Math.floor(rand() * 2 * DAY_MS),
+      label: usd(amount),
+      data: { category: PATTERN_CATEGORY.fanout, pattern: 'fanout' },
+    });
+  }
+}
+
 export function makeAmlScenario(seed = 1): TimelineData<DemoDatum> {
   const rand = mulberry32(seed);
   const { elements, pools } = makeEntities();
@@ -220,5 +247,6 @@ export function makeAmlScenario(seed = 1): TimelineData<DemoDatum> {
   addStructuring(elements, events, pools, rand);
   addCircular(elements, events, pools, rand);
   addPassthrough(elements, events, pools, rand);
+  addFanout(elements, events, pools, rand);
   return { elements, events };
 }
