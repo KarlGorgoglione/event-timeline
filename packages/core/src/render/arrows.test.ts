@@ -5,6 +5,7 @@ import type { TimelineEvent } from '../model/types';
 import { Camera, type RowMetrics, type Viewport } from '../scale/camera';
 import { buildArrows, subLaneOffset } from './arrows';
 import { bySourceTargetColumn } from '../cluster/strategies';
+import { overlayStyle, type EventStyleResolver } from './resolveStyle';
 import type {
   BuildContext,
   ClusteringConfig,
@@ -34,6 +35,8 @@ interface CtxOpts {
   camera?: Camera;
   lod?: Partial<LodConfig>;
   clustering?: Partial<ClusteringConfig>;
+  styleResolver?: EventStyleResolver;
+  formatEventLabel?: (event: TimelineEvent) => string | undefined;
 }
 
 function ctxFor(
@@ -72,6 +75,17 @@ function ctxFor(
       minSeparationPx: 12,
       ...opts.clustering,
     },
+    // §11 resolution mirrors the engine's binding (theme → resolver → .style).
+    resolveElementStyle: (element) =>
+      overlayStyle(defaultTheme.element, undefined, element.style),
+    resolveEventStyle: (event) =>
+      overlayStyle(
+        defaultTheme.event,
+        opts.styleResolver?.(event),
+        event.style,
+      ),
+    formatElementLabel: (element) => element.label ?? element.id,
+    formatEventLabel: opts.formatEventLabel ?? ((event) => event.label),
   };
 }
 
@@ -149,6 +163,55 @@ describe('buildArrows geometry (§1)', () => {
     expect(r.labels[0]!.items[0]!.y).toBeCloseTo(
       (rowCenter(0) + rowCenter(2)) / 2,
     );
+  });
+});
+
+describe('buildArrows styling & formatting (§11)', () => {
+  it('applies a style resolver to the arrow colour', () => {
+    const r = buildArrows(
+      ctxFor([ev({ sourceId: 'r0', targetId: 'r1', time: 100 })], fullBand, {
+        styleResolver: () => ({ arrowColor: '#abcdef' }),
+      }),
+    );
+    expect(r.lines[0]!.color).toBe('#abcdef');
+  });
+
+  it('lets per-event .style win over the resolver (most specific, §11)', () => {
+    const r = buildArrows(
+      ctxFor(
+        [
+          ev({
+            sourceId: 'r0',
+            targetId: 'r1',
+            time: 100,
+            style: { arrowColor: '#0f0' },
+          }),
+        ],
+        fullBand,
+        { styleResolver: () => ({ arrowColor: '#f00' }) },
+      ),
+    );
+    expect(r.lines[0]!.color).toBe('#0f0');
+  });
+
+  it('formats the event label through the formatter, even with no raw label', () => {
+    const r = buildArrows(
+      ctxFor([ev({ sourceId: 'r0', targetId: 'r2', time: 100 })], fullBand, {
+        formatEventLabel: () => 'custom',
+      }),
+    );
+    expect(r.labels[0]?.items[0]?.text).toBe('custom');
+  });
+
+  it('skips an empty formatted label', () => {
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r0', targetId: 'r2', time: 100, label: '$5' })],
+        fullBand,
+        { formatEventLabel: () => '' },
+      ),
+    );
+    expect(r.labels).toHaveLength(0);
   });
 });
 

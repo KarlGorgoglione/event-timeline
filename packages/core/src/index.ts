@@ -29,8 +29,17 @@ export type {
   TimelineEngineOptions,
   ClusteringOptions,
   LodOptions,
+  StyleResolvers,
+  Formatters,
 } from './engine/timeline';
 export type { TimelineEventMap } from './engine/emitter';
+
+export { overlayStyle } from './render/resolveStyle';
+export type {
+  ElementStyleResolver,
+  EventStyleResolver,
+} from './render/resolveStyle';
+export type { TickFormatter, TickLevel } from './scale/ticks';
 
 export { byFirstEvent, barycenter, explicit } from './layout';
 export type { LayoutStrategy } from './layout/types';

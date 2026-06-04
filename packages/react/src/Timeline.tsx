@@ -10,7 +10,9 @@ import {
 } from 'react';
 import {
   VERSION,
+  type Formatters,
   type HitResult,
+  type StyleResolvers,
   type Theme,
   type Time,
   type TimelineData,
@@ -28,6 +30,10 @@ export interface TimelineProps<TData = unknown> {
   data?: TimelineData<TData>;
   theme?: Partial<Theme>;
   options?: TimelineOptions;
+  /** Data-driven per-item style overrides (DESIGN.md §11, §12); memoize. */
+  styleResolvers?: StyleResolvers<TData>;
+  /** Label/tick text formatters (DESIGN.md §11, §12); memoize. */
+  formatters?: Formatters<TData>;
   /** Class applied to the root container. */
   className?: string;
   /** Inline style merged over the default container style. */
@@ -78,7 +84,8 @@ function TimelineInner<TData>(
   props: TimelineProps<TData>,
   ref: ForwardedRef<TimelineHandle<TData>>,
 ) {
-  const { className, style, data, theme, options } = props;
+  const { className, style, data, theme, options, styleResolvers, formatters } =
+    props;
   const containerRef = useRef<HTMLDivElement>(null);
   const baseRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
@@ -96,6 +103,8 @@ function TimelineInner<TData>(
     data,
     theme,
     options,
+    styleResolvers,
+    formatters,
     onReady: props.onReady,
     onViewportChange: props.onViewportChange,
     onDataChange: props.onDataChange,

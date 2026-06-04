@@ -8,6 +8,8 @@
 
 import type { Extent } from '../model/extent';
 import type {
+  ElementStyle,
+  EventStyle,
   Time,
   TimelineElement,
   TimelineEvent,
@@ -157,4 +159,18 @@ export interface BuildContext<TData = unknown> {
   resolveIcon: ResolveIcon;
   lod: LodConfig;
   clustering: ClusteringConfig;
+  /**
+   * Fully resolved per-item styles, following the §11 order (per-item `style` →
+   * resolver → theme). The engine binds these from its theme + style resolvers so
+   * the builders stay pure and the resolution lives in exactly one place.
+   */
+  resolveElementStyle: (element: TimelineElement<TData>) => ElementStyle;
+  resolveEventStyle: (event: TimelineEvent<TData>) => EventStyle;
+  /**
+   * Label text formatters (§11). The engine supplies defaults that echo the raw
+   * label, so a builder never branches on whether a formatter was provided.
+   * `formatEventLabel` may return `undefined`/empty for an event with no label.
+   */
+  formatElementLabel: (element: TimelineElement<TData>) => string;
+  formatEventLabel: (event: TimelineEvent<TData>) => string | undefined;
 }

@@ -12,6 +12,15 @@ export type {
   HitResult,
   Time,
   LayoutStrategy,
+  // Theming & customisation surface (DESIGN.md §11, §12).
+  Theme,
+  ElementStyle,
+  EventStyle,
+  StyleResolvers,
+  Formatters,
+  ElementStyleResolver,
+  EventStyleResolver,
+  TickFormatter,
 } from '@timeline/core';
 
 // Built-in layout strategies (DESIGN.md §7), so hosts can name one in `options`.

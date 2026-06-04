@@ -26,7 +26,7 @@ import type {
   LineSpec,
   NodeSpec,
 } from './specs';
-import type { TimelineEvent } from '../model/types';
+import type { EventStyle, TimelineEvent } from '../model/types';
 
 /** Horizontal pixels a riser is nudged per event sharing its pixel column. */
 const SUB_LANE_STEP_PX = 2;
@@ -170,16 +170,19 @@ function addSingleArrow<TData>(
   batches.columnCounts.set(column, k + 1);
   const x = baseX + subLaneOffset(k);
 
-  const color = event.style?.arrowColor ?? theme.event.arrowColor;
-  const width = event.style?.arrowWidth ?? theme.event.arrowWidth;
-  const size = event.style?.arrowheadSize ?? theme.event.arrowheadSize;
-  const radius = event.style?.nodeRadius ?? theme.event.nodeRadius;
+  // Resolve the full §11 style once per event (theme → resolver → .style).
+  const style = ctx.resolveEventStyle(event);
+  const color = style.arrowColor;
+  const width = style.arrowWidth;
+  const size = style.arrowheadSize;
+  const radius = style.nodeRadius;
+  const labelText = labelsOn ? ctx.formatEventLabel(event) : undefined;
 
   if (event.sourceId === event.targetId) {
     const y = camera.rowToScreenY(rows.sourceRow) + halfRow;
     addSelfLoop(batches, { color, width, size, radius }, x, y, event);
-    if (labelsOn && event.label !== undefined) {
-      pushEventLabel(batches.labels, event.label, theme, event, {
+    if (labelText) {
+      pushEventLabel(batches.labels, labelText, style, {
         x: x + size * 2 + EVENT_LABEL_GAP_PX,
         y,
       });
@@ -210,8 +213,8 @@ function addSingleArrow<TData>(
     width,
     arrowheadSize: size,
   });
-  if (labelsOn && event.label !== undefined) {
-    pushEventLabel(batches.labels, event.label, theme, event, {
+  if (labelText) {
+    pushEventLabel(batches.labels, labelText, style, {
       x: x + width / 2 + EVENT_LABEL_GAP_PX,
       y: (ySource + yTarget) / 2,
     });
@@ -315,11 +318,12 @@ function addSelfLoop<TData>(
 function pushEventLabel(
   labels: Map<string, LabelSpec>,
   text: string,
-  theme: BuildContext['theme'],
-  event: { style?: { labelColor?: string; labelFont?: string } },
+  style: EventStyle,
   at: { x: number; y: number },
 ): void {
-  const color = event.style?.labelColor ?? theme.event.labelColor;
-  const font = event.style?.labelFont ?? theme.event.labelFont;
-  labelBatch(labels, color, font).items.push({ x: at.x, y: at.y, text });
+  labelBatch(labels, style.labelColor, style.labelFont).items.push({
+    x: at.x,
+    y: at.y,
+    text,
+  });
 }

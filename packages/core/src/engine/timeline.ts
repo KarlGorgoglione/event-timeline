@@ -12,7 +12,15 @@ import type { ClusterStrategy } from '../cluster/types';
 import { computeRowLayout, type RowLayout } from '../layout/positions';
 import type { OnDiagnostic } from '../model/diagnostics';
 import { DataStore } from '../model/store';
-import type { TimelineData, Theme, Time } from '../model/types';
+import type {
+  ElementStyle,
+  EventStyle,
+  TimelineData,
+  TimelineElement,
+  TimelineEvent,
+  Theme,
+  Time,
+} from '../model/types';
 import { buildArrows } from '../render/arrows';
 import { Canvas2DRenderer } from '../render/canvas2d';
 import {
@@ -44,7 +52,12 @@ import {
   type RowMetrics,
   type Viewport,
 } from '../scale/camera';
-import { generateTicks } from '../scale/ticks';
+import { generateTicks, type TickFormatter } from '../scale/ticks';
+import {
+  overlayStyle,
+  type ElementStyleResolver,
+  type EventStyleResolver,
+} from '../render/resolveStyle';
 import { PointerController, type PointerHost } from '../interaction/pointer';
 import { buildHitGrid, type HitGrid } from '../interaction/hitGrid';
 import { hitTest } from '../interaction/hitTest';
@@ -72,7 +85,26 @@ export interface LodOptions {
   eventLabelMinPxPerMs?: number;
 }
 
-export interface TimelineEngineOptions {
+/**
+ * Data-driven per-item style overrides (DESIGN.md §11). Each callback runs
+ * between the theme default and the item's own `.style`; most specific wins.
+ */
+export interface StyleResolvers<TData = unknown> {
+  element?: ElementStyleResolver<TData>;
+  event?: EventStyleResolver<TData>;
+}
+
+/**
+ * Label/tick text formatters (DESIGN.md §11). When omitted the engine echoes the
+ * raw label (and the built-in UTC tick formatter of §8).
+ */
+export interface Formatters<TData = unknown> {
+  tickLabel?: TickFormatter;
+  eventLabel?: (event: TimelineEvent<TData>) => string;
+  elementLabel?: (element: TimelineElement<TData>) => string;
+}
+
+export interface TimelineEngineOptions<TData = unknown> {
   theme?: Partial<Theme>;
   onDiagnostic?: OnDiagnostic;
   layout?: LayoutStrategy;
@@ -86,6 +118,10 @@ export interface TimelineEngineOptions {
   multiSelect?: boolean;
   clustering?: ClusteringOptions;
   lod?: LodOptions;
+  /** Data-driven per-item style overrides (DESIGN.md §11). */
+  styleResolvers?: StyleResolvers<TData>;
+  /** Label/tick text formatters (DESIGN.md §11). */
+  formatters?: Formatters<TData>;
 }
 
 /** Minimum pixel spacing header labels need (§8). */
@@ -118,6 +154,23 @@ export class TimelineEngine<TData = unknown> {
   /** Resolved per-frame LOD/clustering config (DESIGN.md §6). */
   private readonly lod: LodConfig;
   private readonly clustering: ClusteringConfig;
+  /**
+   * §11 style/label resolution, bound once from the theme + host resolvers. The
+   * builders receive these via `BuildContext`, so resolution lives in one place.
+   */
+  private readonly resolveElementStyle: (
+    element: TimelineElement<TData>,
+  ) => ElementStyle;
+  private readonly resolveEventStyle: (
+    event: TimelineEvent<TData>,
+  ) => EventStyle;
+  private readonly formatElementLabel: (
+    element: TimelineElement<TData>,
+  ) => string;
+  private readonly formatEventLabel: (
+    event: TimelineEvent<TData>,
+  ) => string | undefined;
+  private readonly tickFormatter: TickFormatter | undefined;
   private readonly iconCache = new IconCache(() =>
     this.scheduler.markDirty('base'),
   );
@@ -162,7 +215,7 @@ export class TimelineEngine<TData = unknown> {
   constructor(
     baseCanvas: HTMLCanvasElement,
     overlayCanvas: HTMLCanvasElement,
-    options: TimelineEngineOptions = {},
+    options: TimelineEngineOptions<TData> = {},
   ) {
     this.theme = resolveTheme(options.theme);
     this.metrics = {
@@ -190,6 +243,24 @@ export class TimelineEngine<TData = unknown> {
         options.lod?.eventLabelMinPxPerMs ??
         DEFAULT_EVENT_LABEL_MIN_PX_PER_DAY / MS_PER_DAY,
     };
+    // Bind §11 resolution once: theme → resolver → per-item `.style`. The theme is
+    // fixed per engine instance, so binding here (not per frame) is correct.
+    const elementResolver = options.styleResolvers?.element;
+    this.resolveElementStyle = (element) =>
+      overlayStyle(
+        this.theme.element,
+        elementResolver?.(element),
+        element.style,
+      );
+    const eventResolver = options.styleResolvers?.event;
+    this.resolveEventStyle = (event) =>
+      overlayStyle(this.theme.event, eventResolver?.(event), event.style);
+    this.formatElementLabel =
+      options.formatters?.elementLabel ??
+      ((element) => element.label ?? element.id);
+    this.formatEventLabel =
+      options.formatters?.eventLabel ?? ((event) => event.label);
+    this.tickFormatter = options.formatters?.tickLabel;
     this.store = new DataStore<TData>({ onDiagnostic: options.onDiagnostic });
     this.camera = new Camera(this.metrics);
     this.renderer = new Canvas2DRenderer(
@@ -478,6 +549,7 @@ export class TimelineEngine<TData = unknown> {
       this.camera.screenXToTime(cssWidth),
       this.camera.state.pxPerMs,
       MIN_LABEL_GAP_PX,
+      this.tickFormatter,
     );
 
     // Major gridlines run from the header bottom down through the content; drawn
@@ -517,6 +589,10 @@ export class TimelineEngine<TData = unknown> {
       resolveIcon: this.resolveIcon,
       lod: this.lod,
       clustering: this.clustering,
+      resolveElementStyle: this.resolveElementStyle,
+      resolveEventStyle: this.resolveEventStyle,
+      formatElementLabel: this.formatElementLabel,
+      formatEventLabel: this.formatEventLabel,
     };
     const elements = buildElementLines(ctx);
     const arrows = buildArrows(ctx);

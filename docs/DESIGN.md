@@ -831,6 +831,32 @@ Carried over from the Phase 2 review; none block Phase 2 acceptance:
   events <1 CSS px apart share a column. Revisit only if clustering (Phase 4) doesn't
   already collapse such cases.
 
+### Phase 6 implementation notes & follow-ups
+
+Carried over from the Phase 6 review; none block Phase 6 acceptance:
+
+- **Resolution merge is "undefined falls through".** `render/resolveStyle.ts`
+  `overlayStyle(base, ...partials)` layers theme → resolver → per-item `style`,
+  later layers winning, but a property that is `undefined`/absent in a partial
+  inherits the prior layer — preserving the `?? theme.default` semantics each level
+  used pre-Phase-6 and keeping the §11 per-property independence. The engine binds
+  the four resolution functions once from its (instance-stable) theme and passes
+  them on `BuildContext`, so builders never branch on "was a resolver/formatter
+  supplied" and resolution has a single home.
+- **Clusters use theme defaults, not per-event resolvers.** A "×N" marker merges
+  many events with possibly different styles, so there is no single event to
+  resolve; `addCluster` keeps `theme.clusterColor`/`theme.event.*`. Per-event
+  resolution applies only to un-clustered arrows. If a host ever needs
+  cluster-level styling, the hook would be a separate `ClusterStyle` resolver keyed
+  on the member set — deferred, not built.
+- **Event-label formatter can synthesise labels.** `formatEventLabel` defaults to
+  `e => e.label`, but a host formatter receives the whole event and may return a
+  string for an event with no raw `label`; the builder draws it when truthy and
+  skips empty strings. Label LOD (§6) still gates *whether* the label draws.
+- **No theme preset shipped in core.** Only `defaultTheme` (dark) + `resolveTheme`
+  are public; theming is host-driven (the demo supplies its own light
+  `Partial<Theme>`). A `lightTheme` preset is an easy future addition if asked for.
+
 ---
 
 ## 17. Verification (how to validate the build end-to-end)

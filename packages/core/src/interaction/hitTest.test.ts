@@ -5,6 +5,7 @@ import type { Extent } from '../model/extent';
 import type { TimelineElement, TimelineEvent } from '../model/types';
 import { buildArrows } from '../render/arrows';
 import { buildElementLines } from '../render/elementLines';
+import { overlayStyle } from '../render/resolveStyle';
 import { bySourceTargetColumn } from '../cluster/strategies';
 import { Camera, type RowMetrics, type Viewport } from '../scale/camera';
 import type {
@@ -63,6 +64,12 @@ function ctxFor(
       minSeparationPx: 12,
       ...clustering,
     },
+    resolveElementStyle: (element) =>
+      overlayStyle(defaultTheme.element, undefined, element.style),
+    resolveEventStyle: (event) =>
+      overlayStyle(defaultTheme.event, undefined, event.style),
+    formatElementLabel: (element) => element.label ?? element.id,
+    formatEventLabel: (event) => event.label,
   };
 }
 

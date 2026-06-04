@@ -403,6 +403,80 @@ describe('TimelineEngine clustering & LOD (§6)', () => {
   });
 });
 
+describe('TimelineEngine theming & formatters (§11)', () => {
+  // A frame with one labelled event between two elements, framed full-width.
+  const data: TimelineData = {
+    elements: [
+      { id: 'a', label: 'Acme' },
+      { id: 'b', label: 'Beta' },
+    ],
+    events: [
+      {
+        id: 'e1',
+        sourceId: 'a',
+        targetId: 'b',
+        time: Date.UTC(2026, 0, 1),
+        label: 'raw',
+      },
+      { id: 'e2', sourceId: 'b', targetId: 'a', time: Date.UTC(2026, 2, 1) },
+    ],
+  };
+
+  function drawTexts(
+    options?: ConstructorParameters<typeof TimelineEngine>[2],
+  ) {
+    const texts: string[] = [];
+    let queued: Array<() => void> = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      queued.push(cb);
+      return queued.length;
+    });
+    const flush = () => {
+      const run = queued;
+      queued = [];
+      for (const cb of run) cb();
+    };
+    const engine = new TimelineEngine(
+      makeRecordingCanvas((name, args) => {
+        if (name === 'fillText') texts.push(String(args[0]));
+      }),
+      makeRecordingCanvas(() => {}),
+      // Disable label LOD so event labels are not suppressed at the fit zoom (§6).
+      { lod: { eventLabelMinPxPerMs: 0 }, ...options },
+    );
+    engine.resize(800, 400, 1);
+    engine.setData(data);
+    flush();
+    engine.dispose();
+    return texts;
+  }
+
+  it('routes element/event labels through the supplied formatters', () => {
+    const texts = drawTexts({
+      formatters: {
+        elementLabel: (e) => `EL:${e.id}`,
+        eventLabel: (e) => `EV:${e.id}`,
+      },
+    });
+    expect(texts).toContain('EL:a');
+    expect(texts).toContain('EV:e1');
+    // The raw label is replaced, not appended.
+    expect(texts).not.toContain('Acme');
+    expect(texts).not.toContain('raw');
+  });
+
+  it('routes header tick labels through the tick formatter', () => {
+    const texts = drawTexts({ formatters: { tickLabel: () => 'TICK' } });
+    expect(texts).toContain('TICK');
+  });
+
+  it('falls back to the raw labels when no formatters are given', () => {
+    const texts = drawTexts();
+    expect(texts).toContain('Acme');
+    expect(texts).toContain('raw');
+  });
+});
+
 describe('TimelineEngine Phase 2 content (§1, §4)', () => {
   it('emits arrows, nodes, and labels when a frame draws', () => {
     const calls: Record<string, number> = {};

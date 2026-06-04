@@ -4,12 +4,15 @@ import {
   barycenter,
   byFirstEvent,
   explicit,
+  type Formatters,
   type HitResult,
   type LayoutStrategy,
+  type StyleResolvers,
+  type Theme,
   type TimelineHandle,
 } from '@timeline/react';
 import { demoData } from './fixture';
-import { makeSynthetic } from './synthetic';
+import { makeSynthetic, type DemoDatum } from './synthetic';
 
 const LAYOUT_NAMES = ['byFirstEvent', 'barycenter', 'explicit'] as const;
 type LayoutName = (typeof LAYOUT_NAMES)[number];
@@ -18,6 +21,45 @@ const LAYOUTS: Record<LayoutName, LayoutStrategy> = {
   barycenter,
   explicit,
 };
+
+// --- Phase 6 customisation (§11) ---------------------------------------------
+
+/** A light theme as a partial override; `resolveTheme` merges it over the dark
+ * default. Demonstrates the host-driven theming surface (no preset shipped in
+ * core, per the chosen demo-only approach). */
+const lightTheme: Partial<Theme> = {
+  background: '#f7f8fa',
+  gridlineColor: 'rgba(0,0,0,0.10)',
+  headerTextColor: '#5a6472',
+  hoverColor: '#d97706',
+  selectionColor: '#2563eb',
+  clusterColor: '#b45309',
+  element: {
+    lineColor: '#2563eb',
+    lineWidth: 2,
+    labelColor: '#1f2933',
+    labelFont: '12px system-ui, sans-serif',
+    iconSize: 16,
+  },
+  event: {
+    arrowColor: '#52606d',
+    arrowWidth: 1,
+    arrowheadSize: 6,
+    labelColor: '#1f2933',
+    labelFont: '11px system-ui, sans-serif',
+    nodeRadius: 3,
+  },
+};
+
+/** Five-colour palette for the data-driven style resolvers. */
+const PALETTE = ['#e06c75', '#98c379', '#61afef', '#c678dd', '#e5c07b'];
+
+/** Maps a `DemoDatum` category bucket to a palette colour (data-driven, §11).
+ * Both datasets carry the payload, so the resolvers read it directly; an absent
+ * category falls back to bucket 0. */
+function paletteColor(category = 0): string {
+  return PALETTE[category % PALETTE.length] as string;
+}
 
 /** Short human label for the status bar (mirrors the default tooltip content). */
 function describeHit(hit: HitResult | null): string {
@@ -33,18 +75,23 @@ function describeHit(hit: HitResult | null): string {
 }
 
 /**
- * Phase 4 demo: scale & LOD on top of Phase 3 interactions — the temporal index
- * culls by binary search, dense events collapse into "×N" cluster markers that
- * expand as you zoom in (or on click, which zooms to their span), and per-event
- * labels appear only past the label-LOD threshold. The status bar mirrors hover
- * and selection state. "Fit" reframes; "10k"/"50k" swap in synthetic datasets to
- * show culling and clustering at scale (drag to pan, ctrl/⌘+wheel to zoom).
+ * Phase 6 demo: theming & customisation (§11) on top of Phase 4 scale/LOD. The
+ * "theme" toggle swaps a light `Partial<Theme>` over the dark default; "colours"
+ * turns on data-driven style resolvers (lines/arrows coloured by category); and
+ * "labels" turns on formatters (upper-cased element labels, prefixed events).
+ * Underneath: the temporal index culls by binary search, dense events collapse
+ * into "×N" cluster markers, and per-event labels appear past the LOD threshold.
+ * "Fit" reframes; "10k"/"50k" swap in synthetic datasets (drag to pan, ctrl/⌘+
+ * wheel to zoom).
  */
 export function App() {
-  const ref = useRef<TimelineHandle>(null);
+  const ref = useRef<TimelineHandle<DemoDatum>>(null);
   const [big, setBig] = useState(false);
   const [huge, setHuge] = useState(false);
   const [layoutName, setLayoutName] = useState<LayoutName>('byFirstEvent');
+  const [themed, setThemed] = useState(false);
+  const [coloured, setColoured] = useState(false);
+  const [labelled, setLabelled] = useState(false);
   const [hover, setHover] = useState<HitResult | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [viewport, setViewport] = useState({ pxPerMs: 0, scrollY: 0 });
@@ -65,6 +112,31 @@ export function App() {
   const options = useMemo(
     () => ({ multiSelect: true, layout: LAYOUTS[layoutName] }),
     [layoutName],
+  );
+
+  // Phase 6 props, memoized so the engine isn't re-created every render (§12).
+  // Each is undefined when its toggle is off, so the engine falls back to the
+  // dark theme / per-item `.style` / raw labels respectively.
+  const theme = useMemo(() => (themed ? lightTheme : undefined), [themed]);
+  const styleResolvers = useMemo<StyleResolvers<DemoDatum> | undefined>(
+    () =>
+      coloured
+        ? {
+            element: (e) => ({ lineColor: paletteColor(e.data?.category) }),
+            event: (e) => ({ arrowColor: paletteColor(e.data?.category) }),
+          }
+        : undefined,
+    [coloured],
+  );
+  const formatters = useMemo<Formatters<DemoDatum> | undefined>(
+    () =>
+      labelled
+        ? {
+            elementLabel: (e) => (e.label ?? e.id).toUpperCase(),
+            eventLabel: (e) => `» ${e.label ?? e.id}`,
+          }
+        : undefined,
+    [labelled],
   );
 
   // Memoized so the referential-stability contract holds (§12): a stable `data`
@@ -134,16 +206,43 @@ export function App() {
         >
           layout: {layoutName}
         </button>
+        <button
+          type="button"
+          data-testid="toggle-theme"
+          onClick={() => setThemed((v) => !v)}
+          style={{ font: '12px system-ui' }}
+        >
+          theme: {themed ? 'light' : 'dark'}
+        </button>
+        <button
+          type="button"
+          data-testid="toggle-resolvers"
+          onClick={() => setColoured((v) => !v)}
+          style={{ font: '12px system-ui' }}
+        >
+          colours: {coloured ? 'on' : 'off'}
+        </button>
+        <button
+          type="button"
+          data-testid="toggle-formatters"
+          onClick={() => setLabelled((v) => !v)}
+          style={{ font: '12px system-ui' }}
+        >
+          labels: {labelled ? 'on' : 'off'}
+        </button>
       </header>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <Timeline
+        <Timeline<DemoDatum>
           ref={ref}
           data={data}
+          theme={theme}
           options={options}
+          styleResolvers={styleResolvers}
+          formatters={formatters}
           onHover={onHover}
           onSelectionChange={onSelectionChange}
           onViewportChange={onViewportChange}
-          style={{ background: '#161b22' }}
+          style={{ background: themed ? lightTheme.background : '#161b22' }}
         />
       </div>
       <footer

@@ -23,15 +23,28 @@ function mulberry32(seed: number): () => number {
 
 const DAY_MS = 86_400_000;
 
+/** A tiny opaque payload, echoed back in callbacks; drives the demo's resolvers. */
+export interface DemoDatum {
+  /** Bucket 0–4 used by the demo's data-driven style resolvers (§11). */
+  category: number;
+}
+
+/** Stable category bucket for an entity index (demo resolvers key on this). */
+export const CATEGORY_COUNT = 5;
+
 export function makeSynthetic(
   eventCount = 10_000,
   elementCount = 200,
   seed = 1,
-): TimelineData {
+): TimelineData<DemoDatum> {
   const rand = mulberry32(seed);
-  const elements: TimelineElement[] = Array.from(
+  const elements: TimelineElement<DemoDatum>[] = Array.from(
     { length: elementCount },
-    (_, i) => ({ id: `el-${i}`, label: `Entity ${i}` }),
+    (_, i) => ({
+      id: `el-${i}`,
+      label: `Entity ${i}`,
+      data: { category: i % CATEGORY_COUNT },
+    }),
   );
 
   const start = Date.UTC(2026, 0, 1);
@@ -42,7 +55,7 @@ export function makeSynthetic(
   // the shape that makes the default `bySourceTargetColumn` clustering visible:
   // a burst's events share a pair and fall within a few days, so they collapse
   // into one "×N" marker at zoom-out and fan back out as you zoom in (§6).
-  const events: TimelineEvent[] = [];
+  const events: TimelineEvent<DemoDatum>[] = [];
   let sourceIndex = 0;
   let targetIndex = 0;
   let time = start;
@@ -64,6 +77,7 @@ export function makeSynthetic(
       targetId: `el-${targetIndex}`,
       time,
       label: i % 100 === 0 ? `#${i}` : undefined,
+      data: { category: sourceIndex % CATEGORY_COUNT },
     });
   }
 

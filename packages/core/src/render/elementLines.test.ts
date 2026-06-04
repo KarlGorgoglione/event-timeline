@@ -6,6 +6,7 @@ import type { TimelineElement } from '../model/types';
 import { Camera, type RowMetrics, type Viewport } from '../scale/camera';
 import { buildElementLines } from './elementLines';
 import { bySourceTargetColumn } from '../cluster/strategies';
+import { overlayStyle, type ElementStyleResolver } from './resolveStyle';
 import type { BuildContext, DataAccess, RowBand, ResolveIcon } from './specs';
 
 const metrics: RowMetrics = {
@@ -18,7 +19,12 @@ const viewport: Viewport = { cssWidth: 800, cssHeight: 400 };
 function ctxFor(
   elements: TimelineElement[],
   extents: Map<string, Extent>,
-  opts: { band?: RowBand; resolveIcon?: ResolveIcon } = {},
+  opts: {
+    band?: RowBand;
+    resolveIcon?: ResolveIcon;
+    styleResolver?: ElementStyleResolver;
+    formatElementLabel?: (element: TimelineElement) => string;
+  } = {},
 ): BuildContext {
   const byId = new Map(elements.map((e) => [e.id, e]));
   const data: DataAccess = {
@@ -45,6 +51,18 @@ function ctxFor(
       strategy: bySourceTargetColumn,
       minSeparationPx: 12,
     },
+    // §11 resolution mirrors the engine's binding (theme → resolver → .style).
+    resolveElementStyle: (element) =>
+      overlayStyle(
+        defaultTheme.element,
+        opts.styleResolver?.(element),
+        element.style,
+      ),
+    resolveEventStyle: (event) =>
+      overlayStyle(defaultTheme.event, undefined, event.style),
+    formatElementLabel:
+      opts.formatElementLabel ?? ((element) => element.label ?? element.id),
+    formatEventLabel: (event) => event.label,
   };
 }
 
@@ -162,5 +180,38 @@ describe('buildElementLines icons (§1, §11)', () => {
     expect(r.icons.items).toHaveLength(0);
     // Label still shifted so it will not jump when the image loads.
     expect(elementLabel(r)?.x).toBeCloseTo(94 + iconSize + 4);
+  });
+});
+
+describe('buildElementLines styling & formatting (§11)', () => {
+  const extents = new Map([['a', { minTime: 100, maxTime: 500 }]]);
+
+  it('applies a style resolver to the line, under the theme but over .style', () => {
+    const r = buildElementLines(
+      ctxFor([{ id: 'a', label: 'A' }], extents, {
+        styleResolver: () => ({ lineColor: '#f00', lineWidth: 5 }),
+      }),
+    );
+    expect(r.lines[0]?.color).toBe('#f00');
+    expect(r.lines[0]?.width).toBe(5);
+  });
+
+  it('lets per-element .style win over the resolver (most specific, §11)', () => {
+    const r = buildElementLines(
+      ctxFor([{ id: 'a', label: 'A', style: { lineColor: '#0f0' } }], extents, {
+        styleResolver: () => ({ lineColor: '#f00', lineWidth: 5 }),
+      }),
+    );
+    expect(r.lines[0]?.color).toBe('#0f0'); // .style overrides resolver
+    expect(r.lines[0]?.width).toBe(5); // resolver still overrides theme
+  });
+
+  it('formats the element label through the formatter', () => {
+    const r = buildElementLines(
+      ctxFor([{ id: 'a', label: 'Acme' }], extents, {
+        formatElementLabel: (e) => e.label!.toUpperCase(),
+      }),
+    );
+    expect(elementLabel(r)?.text).toBe('ACME');
   });
 });

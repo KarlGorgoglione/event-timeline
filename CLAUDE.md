@@ -14,7 +14,7 @@ a numbered phased delivery plan (§15). Read the relevant section before
 implementing — code comments reference these sections by number (e.g. "§5",
 "DESIGN.md §12"). Keep that habit when adding code.
 
-**Current state: Phase 5 complete (layout engine).** Phase 3 (interactions) layered
+**Current state: Phase 6 complete (theming & customisation).** Phase 3 (interactions) layered
 on the Phase 2 renderer: direction-aware orthogonal arrows (riser + source node
 dot + target arrowhead), self-event loop glyphs, event labels, and element
 label+icon at each line start with a sticky-left fallback, all culled by the §5
@@ -60,7 +60,25 @@ engine as the `scheduleLayoutRecompute()` seam (cancelled on dispose, behind
 `layoutDebounceMs`) that Phase 7's incremental mutations will call — `setData`
 stays synchronous. `layout` + the strategies are exposed through
 `TimelineEngineOptions`, the React `TimelineOptions`, and a demo layout toggle.
-The temporal index's bucket consumers and incremental updates land in Phase 6+.
+
+Phase 6 (§11) completes the **style resolution chain** and **formatters**. A single
+pure `render/resolveStyle.ts` (`overlayStyle` + `Element/EventStyleResolver` types)
+defines the §11 order — per-item `style` → resolver → theme default, most specific
+wins, undefined falls through — once, reused for both element and event styles
+(DRY). The engine binds four functions from its theme + host resolvers
+(`resolveElementStyle`/`resolveEventStyle`/`formatElementLabel`/`formatEventLabel`)
+and passes them on `BuildContext`, so the builders read one resolved `ElementStyle`/
+`EventStyle` instead of inline `?? theme` chains and the resolution lives in exactly
+one place (the emoji-glyph icon now also takes the resolved `labelColor`). Tick
+labels route the host `tickLabel` formatter into the already-pluggable
+`generateTicks` seam; clusters keep theme defaults (a merged marker has no single
+event style). `TimelineEngineOptions<TData>` gains `styleResolvers`/`formatters`
+(shared `StyleResolvers`/`Formatters` interfaces, reused verbatim by the React
+`styleResolvers`/`formatters` props per §12); the demo adds theme/colours/labels
+toggles (a light `Partial<Theme>`, data-driven palette resolvers, upper-casing
+formatters). Core ships no theme preset beyond `defaultTheme` — theming stays
+host-driven. The temporal index's bucket consumers and incremental updates land in
+Phase 7.
 When building a feature, find its phase in §15 and its design section first.
 
 ## Commands

@@ -10,10 +10,12 @@ import { useEffect, useRef, type RefObject } from 'react';
 import {
   TimelineEngine,
   type ClusteringOptions,
+  type Formatters,
   type HitResult,
   type LayoutStrategy,
   type LodOptions,
   type OnDiagnostic,
+  type StyleResolvers,
   type Theme,
   type TimelineData,
   type TimelineEventMap,
@@ -40,6 +42,10 @@ export interface UseTimelineArgs<TData> {
   data?: TimelineData<TData>;
   theme?: Partial<Theme>;
   options?: TimelineOptions;
+  /** Data-driven per-item style overrides (DESIGN.md §11, §12). */
+  styleResolvers?: StyleResolvers<TData>;
+  /** Label/tick text formatters (DESIGN.md §11, §12). */
+  formatters?: Formatters<TData>;
   onReady?: () => void;
   onViewportChange?: (v: TimelineEventMap<TData>['viewportChange']) => void;
   onDataChange?: (d: TimelineEventMap<TData>['dataChange']) => void;
@@ -52,6 +58,7 @@ export function useTimeline<TData>(
   args: UseTimelineArgs<TData>,
 ): RefObject<TimelineEngine<TData> | null> {
   const { baseRef, overlayRef, containerRef, data, theme, options } = args;
+  const { styleResolvers, formatters } = args;
   const engineRef = useRef<TimelineEngine<TData> | null>(null);
 
   // Keep the latest callbacks/data in refs so the setup effect doesn't re-run
@@ -78,6 +85,8 @@ export function useTimeline<TData>(
       multiSelect: options?.multiSelect,
       clustering: options?.clustering,
       lod: options?.lod,
+      styleResolvers,
+      formatters,
     });
     engineRef.current = engine;
 
@@ -118,7 +127,15 @@ export function useTimeline<TData>(
       engineRef.current = null;
       appliedData.current = undefined;
     };
-  }, [baseRef, overlayRef, containerRef, theme, options]);
+  }, [
+    baseRef,
+    overlayRef,
+    containerRef,
+    theme,
+    options,
+    styleResolvers,
+    formatters,
+  ]);
 
   // Data sync: full setData whenever the `data` reference changes (§10, §12).
   useEffect(() => {

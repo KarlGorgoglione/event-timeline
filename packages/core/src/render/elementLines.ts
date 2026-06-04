@@ -65,8 +65,10 @@ export function buildElementLines<TData>(
     const rowCenterY = camera.rowToScreenY(rowIndex) + rowHeight / 2;
     const element = data.getElementById(id);
 
-    const lineColor = element?.style?.lineColor ?? theme.element.lineColor;
-    const lineWidth = element?.style?.lineWidth ?? theme.element.lineWidth;
+    // Resolve the full §11 style once per element (theme → resolver → .style).
+    const style = element ? ctx.resolveElementStyle(element) : theme.element;
+    const lineColor = style.lineColor;
+    const lineWidth = style.lineWidth;
     const x1 = lineStartX - LINE_LEAD_PAD_PX;
     lineBatch(lines, lineColor, lineWidth).segments.push({
       x1,
@@ -93,7 +95,7 @@ export function buildElementLines<TData>(
 
     let textX = anchorX;
     if (element?.icon !== undefined) {
-      const iconSize = element.style?.iconSize ?? theme.element.iconSize;
+      const iconSize = style.iconSize;
       const resolved = resolveIcon(element.icon);
       if (resolved.kind === 'image') {
         icons.items.push({
@@ -103,9 +105,10 @@ export function buildElementLines<TData>(
           image: resolved.image,
         });
       } else if (resolved.kind === 'text') {
-        // Emoji / glyph icon drawn as text sized to the icon slot.
+        // Emoji / glyph icon drawn as text sized to the icon slot, tinted with
+        // the element's resolved label colour for consistency.
         const iconFont = `${iconSize}px sans-serif`;
-        labelBatch(labels, theme.element.labelColor, iconFont).items.push({
+        labelBatch(labels, style.labelColor, iconFont).items.push({
           x: anchorX,
           y: rowCenterY,
           text: resolved.text,
@@ -116,10 +119,8 @@ export function buildElementLines<TData>(
       textX = anchorX + iconSize + ICON_GAP_PX;
     }
 
-    const labelColor = element?.style?.labelColor ?? theme.element.labelColor;
-    const labelFont = element?.style?.labelFont ?? theme.element.labelFont;
-    const text = element?.label ?? id;
-    labelBatch(labels, labelColor, labelFont).items.push({
+    const text = element ? ctx.formatElementLabel(element) : id;
+    labelBatch(labels, style.labelColor, style.labelFont).items.push({
       x: textX,
       y: rowCenterY,
       text,
