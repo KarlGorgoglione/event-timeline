@@ -17,15 +17,17 @@ function describeHit(hit: HitResult | null): string {
 }
 
 /**
- * Phase 3 demo: interactions on top of Phase 2 rendering — zoom about the cursor
- * (ctrl/⌘+wheel), vertical scroll (wheel), hover highlight + tooltip, and click
- * selection (ctrl/⌘+click to multi-select). The status bar mirrors hover and
- * selection state. "Fit" reframes via the imperative handle; "10k" swaps in a
- * synthetic dataset to show culling at scale (drag to pan).
+ * Phase 4 demo: scale & LOD on top of Phase 3 interactions — the temporal index
+ * culls by binary search, dense events collapse into "×N" cluster markers that
+ * expand as you zoom in (or on click, which zooms to their span), and per-event
+ * labels appear only past the label-LOD threshold. The status bar mirrors hover
+ * and selection state. "Fit" reframes; "10k"/"50k" swap in synthetic datasets to
+ * show culling and clustering at scale (drag to pan, ctrl/⌘+wheel to zoom).
  */
 export function App() {
   const ref = useRef<TimelineHandle>(null);
   const [big, setBig] = useState(false);
+  const [huge, setHuge] = useState(false);
   const [hover, setHover] = useState<HitResult | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [viewport, setViewport] = useState({ pxPerMs: 0, scrollY: 0 });
@@ -44,9 +46,14 @@ export function App() {
   const options = useMemo(() => ({ multiSelect: true }), []);
 
   // Memoized so the referential-stability contract holds (§12): a stable `data`
-  // reference avoids a full setData on every render. The 10k set is built once.
+  // reference avoids a full setData on every render. The 10k set is built once;
+  // the 50k set is built lazily the first time it is shown (§15 acceptance).
   const synthetic = useMemo(() => makeSynthetic(), []);
-  const data = big ? synthetic : demoData;
+  const synthetic50k = useMemo(
+    () => (huge ? makeSynthetic(50_000, 400, 2) : null),
+    [huge],
+  );
+  const data = synthetic50k ?? (big ? synthetic : demoData);
 
   return (
     <main
@@ -82,6 +89,14 @@ export function App() {
           style={{ font: '12px system-ui' }}
         >
           {big ? 'Sample' : '10k'}
+        </button>
+        <button
+          type="button"
+          data-testid="toggle-50k"
+          onClick={() => setHuge((v) => !v)}
+          style={{ font: '12px system-ui' }}
+        >
+          {huge ? 'Sample' : '50k'}
         </button>
       </header>
       <div style={{ flex: 1, minHeight: 0 }}>

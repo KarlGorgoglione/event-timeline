@@ -88,6 +88,8 @@ export interface Theme {
   hoverColor: string;
   /** Overlay colour for selected primitives' outlines (DESIGN.md §9). */
   selectionColor: string;
+  /** Colour of collapsed-event cluster markers and their counts (DESIGN.md §6). */
+  clusterColor: string;
   /** Theme-level element defaults (base of the resolution chain). */
   element: ElementStyle;
   /** Theme-level event defaults (base of the resolution chain). */

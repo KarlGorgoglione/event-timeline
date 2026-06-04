@@ -148,3 +148,73 @@ describe('DataStore setData rebuild', () => {
     warn.mockRestore();
   });
 });
+
+describe('DataStore temporal index (§5)', () => {
+  const elementsAbc = [
+    { id: 'a', label: 'A' },
+    { id: 'b', label: 'B' },
+    { id: 'c', label: 'C' },
+  ];
+
+  it('returns events sorted by time regardless of input order', () => {
+    const { store } = makeStore();
+    store.setData({
+      elements: elementsAbc,
+      events: [
+        { id: 'e3', sourceId: 'a', targetId: 'b', time: 300 },
+        { id: 'e1', sourceId: 'a', targetId: 'b', time: 100 },
+        { id: 'e2', sourceId: 'b', targetId: 'c', time: 200 },
+      ],
+    });
+    expect(store.getEvents().map((e) => e.id)).toEqual(['e1', 'e2', 'e3']);
+  });
+
+  it('keeps equal-time events in stable insertion order', () => {
+    const { store } = makeStore();
+    store.setData({
+      elements: elementsAbc,
+      events: [
+        { id: 'first', sourceId: 'a', targetId: 'b', time: 50 },
+        { id: 'second', sourceId: 'b', targetId: 'c', time: 50 },
+      ],
+    });
+    expect(store.getEvents().map((e) => e.id)).toEqual(['first', 'second']);
+  });
+
+  it('getEventsInRange selects the inclusive [tStart, tEnd] slice', () => {
+    const { store } = makeStore();
+    store.setData({
+      elements: elementsAbc,
+      events: [
+        { id: 'e1', sourceId: 'a', targetId: 'b', time: 100 },
+        { id: 'e2', sourceId: 'b', targetId: 'c', time: 200 },
+        { id: 'e3', sourceId: 'a', targetId: 'c', time: 300 },
+      ],
+    });
+    expect(store.getEventsInRange(150, 250).map((e) => e.id)).toEqual(['e2']);
+    expect(store.getEventsInRange(100, 300).map((e) => e.id)).toEqual([
+      'e1',
+      'e2',
+      'e3',
+    ]);
+    expect(store.getEventsInRange(400, 500)).toHaveLength(0);
+    expect(store.getEventsInRange(250, 150)).toHaveLength(0);
+  });
+
+  it('buckets events under both endpoints in time order (self-event once)', () => {
+    const { store } = makeStore();
+    store.setData({
+      elements: elementsAbc,
+      events: [
+        { id: 'e1', sourceId: 'a', targetId: 'b', time: 100 },
+        { id: 'e2', sourceId: 'a', targetId: 'a', time: 200 },
+        { id: 'e3', sourceId: 'a', targetId: 'c', time: 300 },
+      ],
+    });
+    // a touched by all three; b by e1 only; indices follow the sorted order.
+    expect(store.getEventIndicesForElement('a')).toEqual([0, 1, 2]);
+    expect(store.getEventIndicesForElement('b')).toEqual([0]);
+    expect(store.getEventIndicesForElement('c')).toEqual([2]);
+    expect(store.getEventIndicesForElement('missing')).toEqual([]);
+  });
+});

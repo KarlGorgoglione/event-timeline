@@ -7,9 +7,15 @@
 // the DPR convention (§3) in one place and the geometry portable.
 
 import type { Extent } from '../model/extent';
-import type { TimelineElement, TimelineEvent, Theme } from '../model/types';
+import type {
+  Time,
+  TimelineElement,
+  TimelineEvent,
+  Theme,
+} from '../model/types';
 import type { Camera, Viewport } from '../scale/camera';
 import type { RowLayout } from '../layout/positions';
+import type { ClusterStrategy } from '../cluster/types';
 
 /** A line segment in CSS pixels. */
 export interface SpecSegment {
@@ -87,6 +93,17 @@ export type HitTarget<TData = unknown> =
       node?: { x: number; y: number };
       width: number;
       arrowheadSize: number;
+    }
+  | {
+      kind: 'cluster';
+      /** The collapsed members, surfaced verbatim in the hit `HitResult` (§6). */
+      events: TimelineEvent<TData>[];
+      /** Riser spanning the cluster's row interval. */
+      segments: SpecSegment[];
+      /** Count marker centre; its half-extent for square hit containment. */
+      marker: { x: number; y: number };
+      markerSize: number;
+      width: number;
     };
 
 /**
@@ -96,6 +113,8 @@ export type HitTarget<TData = unknown> =
  */
 export interface DataAccess<TData = unknown> {
   getEvents(): readonly TimelineEvent<TData>[];
+  /** Events with `time` in `[tStart, tEnd]` via the temporal index (§5). */
+  getEventsInRange(tStart: Time, tEnd: Time): readonly TimelineEvent<TData>[];
   getElements(): readonly TimelineElement<TData>[];
   getElementById(id: string): TimelineElement<TData> | undefined;
   getExtent(id: string): Extent | undefined;
@@ -113,6 +132,20 @@ export type IconResolution =
 
 export type ResolveIcon = (icon: string | HTMLImageElement) => IconResolution;
 
+/** Resolved level-of-detail config for one frame (§6). */
+export interface LodConfig {
+  /** Below this zoom, per-event labels are suppressed; markers still show. */
+  eventLabelMinPxPerMs: number;
+}
+
+/** Resolved clustering config for one frame (§6). */
+export interface ClusteringConfig {
+  enabled: boolean;
+  strategy: ClusterStrategy;
+  /** Pixel separation under which same-key events collapse into a marker. */
+  minSeparationPx: number;
+}
+
 /** Everything a primitive builder reads for one frame. */
 export interface BuildContext<TData = unknown> {
   camera: Camera;
@@ -122,4 +155,6 @@ export interface BuildContext<TData = unknown> {
   theme: Theme;
   band: RowBand;
   resolveIcon: ResolveIcon;
+  lod: LodConfig;
+  clustering: ClusteringConfig;
 }

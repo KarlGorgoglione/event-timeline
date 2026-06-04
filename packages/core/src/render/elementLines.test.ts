@@ -5,6 +5,7 @@ import type { Extent } from '../model/extent';
 import type { TimelineElement } from '../model/types';
 import { Camera, type RowMetrics, type Viewport } from '../scale/camera';
 import { buildElementLines } from './elementLines';
+import { bySourceTargetColumn } from '../cluster/strategies';
 import type { BuildContext, DataAccess, RowBand, ResolveIcon } from './specs';
 
 const metrics: RowMetrics = {
@@ -22,6 +23,7 @@ function ctxFor(
   const byId = new Map(elements.map((e) => [e.id, e]));
   const data: DataAccess = {
     getEvents: () => [],
+    getEventsInRange: () => [],
     getElements: () => elements,
     getElementById: (id) => byId.get(id),
     getExtent: (id) => extents.get(id),
@@ -37,6 +39,12 @@ function ctxFor(
     theme: defaultTheme,
     band: opts.band ?? { firstRow: 0, lastRow: elements.length - 1 },
     resolveIcon: opts.resolveIcon ?? (() => ({ kind: 'none' })),
+    lod: { eventLabelMinPxPerMs: 0 },
+    clustering: {
+      enabled: false,
+      strategy: bySourceTargetColumn,
+      minSeparationPx: 12,
+    },
   };
 }
 

@@ -4,10 +4,11 @@ import type {
   TimelineEvent,
 } from '@timeline/react';
 
-// A deterministic synthetic dataset for exercising Phase 2 culling at scale
-// (DESIGN.md §15 acceptance: 10k events render correctly and culled). A seeded
-// PRNG keeps it reproducible across runs so the demo and the Playwright test see
-// the same data. The 50k perf/golden generator arrives with the indexed phases.
+// A deterministic synthetic dataset for exercising culling and clustering at
+// scale (DESIGN.md §15: Phase 2 culls 10k events; Phase 4 collapses 50k into
+// clusters at zoom-out). A seeded PRNG keeps it reproducible across runs so the
+// demo and the Playwright tests see the same data; pass a larger `eventCount`
+// (e.g. 50_000) for the indexed-phase acceptance run.
 
 /** Mulberry32 — a tiny, fast, deterministic 32-bit PRNG. */
 function mulberry32(seed: number): () => number {
@@ -19,6 +20,8 @@ function mulberry32(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+const DAY_MS = 86_400_000;
 
 export function makeSynthetic(
   eventCount = 10_000,
@@ -32,20 +35,37 @@ export function makeSynthetic(
   );
 
   const start = Date.UTC(2026, 0, 1);
-  const yearMs = 365 * 86_400_000;
-  const events: TimelineEvent[] = Array.from({ length: eventCount }, (_, i) => {
-    const sourceIndex = Math.floor(rand() * elementCount);
-    // ~3% self-events; otherwise a (usually) different target.
-    const targetIndex =
-      rand() < 0.03 ? sourceIndex : Math.floor(rand() * elementCount);
-    return {
+  const yearMs = 365 * DAY_MS;
+
+  // Events arrive in *bursts* of repeated transfers between the same pair over a
+  // few days — the shape real flow data takes (recurring counterparties), and
+  // the shape that makes the default `bySourceTargetColumn` clustering visible:
+  // a burst's events share a pair and fall within a few days, so they collapse
+  // into one "×N" marker at zoom-out and fan back out as you zoom in (§6).
+  const events: TimelineEvent[] = [];
+  let sourceIndex = 0;
+  let targetIndex = 0;
+  let time = start;
+  for (let i = 0; i < eventCount; i++) {
+    const continues = i > 0 && rand() < 0.6;
+    if (continues) {
+      // Same pair, 0–3 days after the previous event (a tight temporal burst).
+      time += Math.floor(rand() * 3 * DAY_MS);
+    } else {
+      sourceIndex = Math.floor(rand() * elementCount);
+      // ~3% self-events; otherwise a (usually) different target.
+      targetIndex =
+        rand() < 0.03 ? sourceIndex : Math.floor(rand() * elementCount);
+      time = start + Math.floor(rand() * yearMs);
+    }
+    events.push({
       id: `ev-${i}`,
       sourceId: `el-${sourceIndex}`,
       targetId: `el-${targetIndex}`,
-      time: start + Math.floor(rand() * yearMs),
+      time,
       label: i % 100 === 0 ? `#${i}` : undefined,
-    };
-  });
+    });
+  }
 
   return { elements, events };
 }

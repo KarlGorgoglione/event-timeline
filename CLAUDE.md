@@ -14,26 +14,41 @@ a numbered phased delivery plan (§15). Read the relevant section before
 implementing — code comments reference these sections by number (e.g. "§5",
 "DESIGN.md §12"). Keep that habit when adding code.
 
-**Current state: Phase 3 complete (interactions).** On top of the Phase 2
-renderer (direction-aware orthogonal arrows — riser + source node dot + target
-arrowhead — self-event loop glyphs, event labels, and element label+icon at each
-line start with a sticky-left fallback, all culled by the §5 row-interval test;
-`drawBase` decomposed into pure CSS-px "primitive builder" modules
-`render/{specs,rowBand,elementLines,arrows,snap,iconCache,batch}.ts` feeding a
-single snap pass; a backend-free `Renderer` seam), the engine now handles
-interaction (§9, §12): zoom-about-cursor, vertical scroll, a click/pan pointer
-state machine, a 64px screen-space hit grid rebuilt once per base draw (§5),
-per-frame coalesced hover, and click selection. Hover/selection draw on an
-independent overlay layer (`hover`/`selectionColor` from the Theme) that
-re-renders whenever the base does, so highlights track content under pan/zoom.
-The builders emit identity-carrying `HitTarget` specs from the same geometry
-they already compute (DRY), feeding both the hit grid and the overlay. The
-`@timeline/react` binding adds a portal-based default `Tooltip` plus
+**Current state: Phase 4 complete (scale & LOD).** Phase 3 (interactions) layered
+on the Phase 2 renderer: direction-aware orthogonal arrows (riser + source node
+dot + target arrowhead), self-event loop glyphs, event labels, and element
+label+icon at each line start with a sticky-left fallback, all culled by the §5
+row-interval test; `drawBase` decomposed into pure CSS-px "primitive builder"
+modules `render/{specs,rowBand,elementLines,arrows,snap,iconCache,batch}.ts`
+feeding a single snap pass; a backend-free `Renderer` seam. On top of that the
+engine handles interaction (§9, §12): zoom-about-cursor, vertical scroll, a
+click/pan pointer state machine, a 64px screen-space hit grid rebuilt once per
+base draw (§5), per-frame coalesced hover, and click selection. Hover/selection
+draw on an independent overlay layer (`hover`/`selectionColor` from the Theme)
+that re-renders whenever the base does, so highlights track content under
+pan/zoom. The builders emit identity-carrying `HitTarget` specs from the same
+geometry they already compute (DRY), feeding both the hit grid and the overlay.
+The `@timeline/react` binding adds a portal-based default `Tooltip` plus
 `onHover`/`onClick`/`onSelectionChange` callbacks and `select`/`zoomToRange` on
 the imperative handle; the demo gains a status bar, multi-select, and a 10k
-synthetic-dataset toggle. The temporal index, LOD/clustering, and richer layout
-land in Phase 4+. When building a feature, find its phase in §15 and its design
-section first.
+synthetic-dataset toggle.
+
+Phase 4 (§5, §6) makes that scale to ~50k events. Events are kept **time-sorted**
+behind a single `reindex()` (the one index-build path §5: `setData` clears, then
+inserts, then reindexes) with stable `(time, seq)` ordering, plus per-element
+buckets (`Map<elementId, eventIndex[]>`). Horizontal culling in `render/arrows.ts`
+is now a binary search (`model/temporalIndex.ts` `lowerBound`/`upperBound` →
+`store.getEventsInRange`) over the camera-derived visible window, not a linear
+scan. A pure, pluggable clustering pass (`cluster/{types,strategies,cluster}.ts`,
+mirroring `layout/`) collapses dense same-key events within `minSeparationPx` into
+a "×N" count marker (themeable `clusterColor`); clusters are hit-testable and
+**click-to-zoom-expand** via `zoomToRange`, and fan back out automatically as you
+zoom in (no persisted state). Per-event labels are suppressed below an LOD zoom
+threshold. `clustering`/`lod` are configurable through `TimelineEngineOptions` and
+the React `TimelineOptions`; the demo adds a 50k toggle and cluster status.
+The temporal index's bucket consumers (barycenter layout §7) and incremental
+updates land in Phase 5+. When building a feature, find its phase in §15 and its
+design section first.
 
 ## Commands
 

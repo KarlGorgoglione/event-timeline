@@ -7,7 +7,13 @@
 
 import { createDefaultDiagnosticSink, type OnDiagnostic } from './diagnostics';
 import { type Extent, dataExtent, widenExtent } from './extent';
-import type { TimelineData, TimelineElement, TimelineEvent } from './types';
+import { buildBuckets, lowerBound, upperBound } from './temporalIndex';
+import type {
+  Time,
+  TimelineData,
+  TimelineElement,
+  TimelineEvent,
+} from './types';
 
 export interface DataStoreOptions {
   onDiagnostic?: OnDiagnostic;
@@ -25,9 +31,14 @@ export class DataStore<TData = unknown> {
 
   private elements: TimelineElement<TData>[] = [];
   private elementById = new Map<string, TimelineElement<TData>>();
+  /** Events sorted ascending by `time` (DESIGN.md §5); see {@link reindex}. */
   private events: TimelineEvent<TData>[] = [];
   private eventById = new Map<string, TimelineEvent<TData>>();
   private extents = new Map<string, Extent>();
+  /** Element id → indices into {@link events}, in time order (§5). */
+  private eventIndicesByElement = new Map<string, number[]>();
+  /** Monotonic insertion counter, the stable tiebreak for equal-time events. */
+  private seq = new Map<TimelineEvent<TData>, number>();
 
   constructor(options: DataStoreOptions = {}) {
     this.onDiagnostic = options.onDiagnostic ?? createDefaultDiagnosticSink();
@@ -47,6 +58,7 @@ export class DataStore<TData = unknown> {
     for (const event of data.events) {
       if (this.insertEvent(event)) added++;
     }
+    this.reindex();
     return { added, removed: 0, updated: 0 };
   }
 
@@ -56,6 +68,23 @@ export class DataStore<TData = unknown> {
     this.events = [];
     this.eventById.clear();
     this.extents.clear();
+    this.eventIndicesByElement.clear();
+    this.seq.clear();
+  }
+
+  /**
+   * Finalise the derived event indexes from the validated events (§5): sort by
+   * `time` (stable on the insertion `seq`, so equal-time order is deterministic
+   * across engines), then build the per-element buckets in one pass. This is the
+   * single index-build path — the future incremental `addEvents` (§10) re-enters
+   * here rather than maintaining a parallel builder.
+   */
+  private reindex(): void {
+    this.events.sort((a, b) => {
+      if (a.time !== b.time) return a.time - b.time;
+      return (this.seq.get(a) ?? 0) - (this.seq.get(b) ?? 0);
+    });
+    this.eventIndicesByElement = buildBuckets(this.events);
   }
 
   private insertElement(element: TimelineElement<TData>): boolean {
@@ -105,6 +134,7 @@ export class DataStore<TData = unknown> {
       return false;
     }
 
+    this.seq.set(event, this.events.length);
     this.events.push(event);
     this.eventById.set(event.id, event);
     // An event widens both endpoints' extents; a self-event (source === target)
@@ -128,6 +158,26 @@ export class DataStore<TData = unknown> {
 
   getEvents(): readonly TimelineEvent<TData>[] {
     return this.events;
+  }
+
+  /**
+   * The events whose `time` falls in `[tStart, tEnd]` (inclusive), via binary
+   * search over the sorted array — O(log n + k) (§5). Used by the renderer for
+   * horizontal culling instead of a linear scan.
+   */
+  getEventsInRange(tStart: Time, tEnd: Time): readonly TimelineEvent<TData>[] {
+    if (tEnd < tStart) return [];
+    const lo = lowerBound(this.events, tStart);
+    const hi = upperBound(this.events, tEnd);
+    return this.events.slice(lo, hi);
+  }
+
+  /**
+   * Indices into {@link getEvents} of the events touching `id`, in time order
+   * (§5). Empty for an unknown or event-less element.
+   */
+  getEventIndicesForElement(id: string): readonly number[] {
+    return this.eventIndicesByElement.get(id) ?? [];
   }
 
   getElementById(id: string): TimelineElement<TData> | undefined {

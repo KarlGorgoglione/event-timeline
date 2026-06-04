@@ -5,8 +5,14 @@ import type { Extent } from '../model/extent';
 import type { TimelineElement, TimelineEvent } from '../model/types';
 import { buildArrows } from '../render/arrows';
 import { buildElementLines } from '../render/elementLines';
+import { bySourceTargetColumn } from '../cluster/strategies';
 import { Camera, type RowMetrics, type Viewport } from '../scale/camera';
-import type { BuildContext, DataAccess, RowBand } from '../render/specs';
+import type {
+  BuildContext,
+  ClusteringConfig,
+  DataAccess,
+  RowBand,
+} from '../render/specs';
 import { buildHitGrid } from './hitGrid';
 import { hitTest } from './hitTest';
 
@@ -28,10 +34,16 @@ function ctxFor(
   elements: TimelineElement[],
   events: TimelineEvent[],
   extents: Map<string, Extent>,
+  clustering?: Partial<ClusteringConfig>,
 ): BuildContext {
   const byId = new Map(elements.map((e) => [e.id, e]));
   const data: DataAccess = {
     getEvents: () => events,
+    // Mirror the store: the temporal-index slice is time-sorted (cluster.ts §6).
+    getEventsInRange: (a, b) =>
+      events
+        .filter((e) => e.time >= a && e.time <= b)
+        .sort((x, y) => x.time - y.time),
     getElements: () => elements,
     getElementById: (id) => byId.get(id),
     getExtent: (id) => extents.get(id),
@@ -44,6 +56,13 @@ function ctxFor(
     theme: defaultTheme,
     band: fullBand,
     resolveIcon: () => ({ kind: 'none' }),
+    lod: { eventLabelMinPxPerMs: 0 },
+    clustering: {
+      enabled: false,
+      strategy: bySourceTargetColumn,
+      minSeparationPx: 12,
+      ...clustering,
+    },
   };
 }
 
@@ -54,8 +73,11 @@ const extents = new Map<string, Extent>([
   ['r2', { minTime: 0, maxTime: 400 }],
 ]);
 
-function gridFor(events: TimelineEvent[]) {
-  const ctx = ctxFor(elements, events, extents);
+function gridFor(
+  events: TimelineEvent[],
+  clustering?: Partial<ClusteringConfig>,
+) {
+  const ctx = ctxFor(elements, events, extents, clustering);
   const targets = [
     ...buildElementLines(ctx).targets,
     ...buildArrows(ctx).targets,
@@ -103,5 +125,20 @@ describe('hitTest (§5, §9)', () => {
     // Midway between two element lines, well outside the hit tolerance.
     const hit = hitTest(grid, 300, (rowCenter(0) + rowCenter(1)) / 2);
     expect(hit).toBeNull();
+  });
+
+  it('hits a cluster marker and returns its members and count (§6)', () => {
+    // Two r0→r2 events 2px apart collapse (minSeparationPx 12) into a marker.
+    const events: TimelineEvent[] = [
+      { id: 'ev1', sourceId: 'r0', targetId: 'r2', time: 200 },
+      { id: 'ev2', sourceId: 'r0', targetId: 'r2', time: 202 },
+    ];
+    const grid = gridFor(events, { enabled: true });
+    const hit = hitTest(grid, 201, (rowCenter(0) + rowCenter(2)) / 2);
+    expect(hit?.kind).toBe('cluster');
+    if (hit?.kind === 'cluster') {
+      expect(hit.count).toBe(2);
+      expect(hit.events.map((e) => e.id)).toEqual(['ev1', 'ev2']);
+    }
   });
 });

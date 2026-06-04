@@ -9,7 +9,9 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import {
   TimelineEngine,
+  type ClusteringOptions,
   type HitResult,
+  type LodOptions,
   type OnDiagnostic,
   type Theme,
   type TimelineData,
@@ -20,6 +22,10 @@ export interface TimelineOptions {
   onDiagnostic?: OnDiagnostic;
   /** Allow `ctrl`/`⌘`+click to extend the selection (DESIGN.md §9). */
   multiSelect?: boolean;
+  /** Event collapsing/aggregation config (DESIGN.md §6). */
+  clustering?: ClusteringOptions;
+  /** Level-of-detail config, e.g. the event-label zoom threshold (DESIGN.md §6). */
+  lod?: LodOptions;
 }
 
 export interface UseTimelineArgs<TData> {
@@ -63,6 +69,8 @@ export function useTimeline<TData>(
       theme,
       onDiagnostic: options?.onDiagnostic,
       multiSelect: options?.multiSelect,
+      clustering: options?.clustering,
+      lod: options?.lod,
     });
     engineRef.current = engine;
 

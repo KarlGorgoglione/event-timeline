@@ -7,6 +7,8 @@
 
 import { byFirstEvent } from '../layout/byFirstEvent';
 import type { LayoutStrategy } from '../layout/types';
+import { bySourceTargetColumn } from '../cluster/strategies';
+import type { ClusterStrategy } from '../cluster/types';
 import { computeRowLayout, type RowLayout } from '../layout/positions';
 import type { OnDiagnostic } from '../model/diagnostics';
 import { DataStore } from '../model/store';
@@ -28,7 +30,12 @@ import {
   snapLines,
   snapNodes,
 } from '../render/snap';
-import type { BuildContext, ResolveIcon } from '../render/specs';
+import type {
+  BuildContext,
+  ClusteringConfig,
+  LodConfig,
+  ResolveIcon,
+} from '../render/specs';
 import type { LineSegment } from '../render/types';
 import {
   Camera,
@@ -48,16 +55,39 @@ import { TypedEmitter, type TimelineEventMap } from './emitter';
 import { FrameScheduler, type DirtyFlags } from './scheduler';
 import { resolveTheme } from './theme';
 
+/** Event collapsing/aggregation config (DESIGN.md §6); all fields defaulted. */
+export interface ClusteringOptions {
+  /** Collapse dense events into count markers. Default `true`. */
+  enabled?: boolean;
+  /** Keying strategy. Default `bySourceTargetColumn`. */
+  strategy?: ClusterStrategy;
+  /** Pixel separation under which same-key events merge. Default 12. */
+  minSeparationPx?: number;
+}
+
+/** Level-of-detail config (DESIGN.md §6); all fields defaulted. */
+export interface LodOptions {
+  /** Zoom (CSS px per ms) at/above which per-event labels are drawn. */
+  eventLabelMinPxPerMs?: number;
+}
+
 export interface TimelineEngineOptions {
   theme?: Partial<Theme>;
   onDiagnostic?: OnDiagnostic;
   layout?: LayoutStrategy;
   /** Allow `ctrl`/`⌘`+click to extend the selection (DESIGN.md §9). */
   multiSelect?: boolean;
+  clustering?: ClusteringOptions;
+  lod?: LodOptions;
 }
 
 /** Minimum pixel spacing header labels need (§8). */
 const MIN_LABEL_GAP_PX = 64;
+const MS_PER_DAY = 86_400_000;
+/** Default clustering merge distance in CSS px (§6). */
+const DEFAULT_CLUSTER_MIN_SEPARATION_PX = 12;
+/** Default label-LOD threshold: show event labels at ≥40 CSS px per day (§6). */
+const DEFAULT_EVENT_LABEL_MIN_PX_PER_DAY = 40;
 
 export class TimelineEngine<TData = unknown> {
   private readonly theme: Theme;
@@ -70,6 +100,9 @@ export class TimelineEngine<TData = unknown> {
   private readonly pointer: PointerController;
   private readonly multiSelect: boolean;
   private readonly layoutStrategy: LayoutStrategy;
+  /** Resolved per-frame LOD/clustering config (DESIGN.md §6). */
+  private readonly lod: LodConfig;
+  private readonly clustering: ClusteringConfig;
   private readonly iconCache = new IconCache(() =>
     this.scheduler.markDirty('base'),
   );
@@ -124,6 +157,18 @@ export class TimelineEngine<TData = unknown> {
     };
     this.layoutStrategy = options.layout ?? byFirstEvent;
     this.multiSelect = options.multiSelect ?? false;
+    this.clustering = {
+      enabled: options.clustering?.enabled ?? true,
+      strategy: options.clustering?.strategy ?? bySourceTargetColumn,
+      minSeparationPx:
+        options.clustering?.minSeparationPx ??
+        DEFAULT_CLUSTER_MIN_SEPARATION_PX,
+    };
+    this.lod = {
+      eventLabelMinPxPerMs:
+        options.lod?.eventLabelMinPxPerMs ??
+        DEFAULT_EVENT_LABEL_MIN_PX_PER_DAY / MS_PER_DAY,
+    };
     this.store = new DataStore<TData>({ onDiagnostic: options.onDiagnostic });
     this.camera = new Camera(this.metrics);
     this.renderer = new Canvas2DRenderer(
@@ -339,6 +384,14 @@ export class TimelineEngine<TData = unknown> {
     const hit = this.hitGrid ? hitTest(this.hitGrid, x, y) : null;
     if (hit !== null) this.emitter.emit('click', { hit, modifiers: mods });
 
+    // A cluster is an ephemeral aggregate, not a selectable entity: clicking it
+    // expands the collapsed events by zooming to their span (§6), leaving the
+    // selection untouched.
+    if (hit?.kind === 'cluster') {
+      this.expandCluster(hit.events);
+      return;
+    }
+
     const result = nextSelection(
       this.selectedIds,
       hit !== null ? hitId(hit) : null,
@@ -351,6 +404,18 @@ export class TimelineEngine<TData = unknown> {
       this.emitter.emit('selectionChange', { ids: result.ids });
       this.scheduler.markDirty('overlay');
     }
+  }
+
+  /** Zoom to a clicked cluster's member time span, expanding it (§6). */
+  private expandCluster(events: readonly { time: Time }[]): void {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const event of events) {
+      if (event.time < min) min = event.time;
+      if (event.time > max) max = event.time;
+    }
+    // zoomToRange no-ops on a zero/negative span (e.g. same-instant clusters).
+    if (Number.isFinite(min)) this.zoomToRange(min, max);
   }
 
   private emitViewportChange(): void {
@@ -418,6 +483,8 @@ export class TimelineEngine<TData = unknown> {
         headerHeight,
       ),
       resolveIcon: this.resolveIcon,
+      lod: this.lod,
+      clustering: this.clustering,
     };
     const elements = buildElementLines(ctx);
     const arrows = buildArrows(ctx);
@@ -556,6 +623,23 @@ export class TimelineEngine<TData = unknown> {
       );
       return;
     }
+    if (target.kind === 'cluster') {
+      if (target.segments.length > 0) {
+        this.renderer.drawLines(
+          snapLines(
+            { color, width: target.width + 2, segments: target.segments },
+            dpr,
+          ),
+        );
+      }
+      this.renderer.drawNodes(
+        snapNodes(
+          { color, radius: target.markerSize + 1, items: [target.marker] },
+          dpr,
+        ),
+      );
+      return;
+    }
     this.renderer.drawLines(
       snapLines(
         { color, width: target.width + 2, segments: target.segments },
@@ -603,8 +687,14 @@ function hitId(hit: HitResult): string {
 
 /** The `kind:id` key matching {@link hitId} for a target. */
 function targetKey(target: HitTarget): string {
-  const id = target.kind === 'element' ? target.element.id : target.event.id;
-  return `${target.kind}:${id}`;
+  switch (target.kind) {
+    case 'element':
+      return `element:${target.element.id}`;
+    case 'event':
+      return `event:${target.event.id}`;
+    case 'cluster':
+      return `cluster:${target.events.map((e) => e.id).join(',')}`;
+  }
 }
 
 /** Recover the arrowhead direction from a target's last segment (y-down). */

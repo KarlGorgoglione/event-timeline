@@ -1,15 +1,22 @@
-// Directed event arrows (DESIGN.md §1, §4, §5, §16).
+// Directed event arrows (DESIGN.md §1, §4, §5, §6, §16).
 //
 // Each event is an orthogonal arrow at a single instant: a vertical riser at the
 // event time between the source and target rows, a node dot at the source, and a
 // direction-aware arrowhead at the target. A self-event (source === target) is a
 // small rectangular half-loop on the element's own line. Risers sharing a pixel
-// column are spread a few px (sub-lane offset, §16). Culling is a linear scan
-// over all events using the §5 row-interval test, so an arrow whose endpoints
-// are both off-screen but whose riser crosses the visible band is retained.
+// column are spread a few px (sub-lane offset, §16).
+//
+// Horizontal culling is a binary search over the time-sorted index (§5), not a
+// linear scan: only events whose time falls in the (margin-widened) visible
+// window are considered, then the §5 row-interval test drops those whose riser
+// misses the visible band. Survivors are collapsed by the clustering pass (§6)
+// — dense same-key runs become a single count marker — and per-event labels are
+// suppressed below the label-LOD zoom threshold.
 //
 // Pure: works in CSS pixels and returns specs; the engine snaps to device px.
 
+import { clusterEvents } from '../cluster/cluster';
+import type { ClusterContext } from '../cluster/types';
 import { arrowheadBatch, labelBatch, lineBatch, nodeBatch } from './batch';
 import type {
   ArrowheadSpec,
@@ -25,20 +32,34 @@ import type { TimelineEvent } from '../model/types';
 const SUB_LANE_STEP_PX = 2;
 /** Cap on the sub-lane spread; residual overlap is accepted (§16). */
 const SUB_LANE_MAX = 4;
-/** Gap between the riser and its event label. */
+/** Gap between the riser/marker and its label. */
 const EVENT_LABEL_GAP_PX = 4;
 /** Slack each side for the horizontal cull (arrowhead/node/self-loop extent). */
 const HORIZONTAL_MARGIN_PX = 48;
+/** Extra radius a cluster marker gets over an ordinary source dot. */
+const CLUSTER_MARKER_BONUS_PX = 2;
 /** Pointing straight down / up in screen space (y-down); risers are vertical. */
 const ANGLE_DOWN = Math.PI / 2;
 const ANGLE_UP = -Math.PI / 2;
 
 /**
  * Deterministic sub-lane nudge for the `k`-th event in a pixel column (§16).
- * Stable because events are scanned in insertion order; capped to bound fan-out.
+ * Stable because events are scanned in (time, insertion) order; capped to bound
+ * fan-out.
  */
 export function subLaneOffset(k: number): number {
   return Math.min(k, SUB_LANE_MAX) * SUB_LANE_STEP_PX;
+}
+
+/** Mutable per-frame accumulators shared by the single-arrow and cluster paths. */
+interface Batches<TData> {
+  lines: Map<string, LineSpec>;
+  nodes: Map<string, NodeSpec>;
+  arrowheads: Map<string, ArrowheadSpec>;
+  labels: Map<string, LabelSpec>;
+  targets: HitTarget<TData>[];
+  /** Count of risers already placed per rounded pixel column (sub-lane keying). */
+  columnCounts: Map<number, number>;
 }
 
 export interface ArrowsResult<TData = unknown> {
@@ -47,107 +68,212 @@ export interface ArrowsResult<TData = unknown> {
   nodes: NodeSpec[];
   arrowheads: ArrowheadSpec[];
   labels: LabelSpec[];
-  /** Identity-carrying arrow geometry for hit-testing (§5). */
+  /** Identity-carrying arrow/cluster geometry for hit-testing (§5, §6). */
   targets: HitTarget<TData>[];
 }
 
 export function buildArrows<TData>(
   ctx: BuildContext<TData>,
 ): ArrowsResult<TData> {
-  const { camera, rowLayout, data, viewport, theme, band } = ctx;
-  const rowHeight = theme.rowHeight;
-  const halfRow = rowHeight / 2;
+  const { camera, viewport, lod, clustering } = ctx;
 
-  const lines = new Map<string, LineSpec>();
-  const nodes = new Map<string, NodeSpec>();
-  const arrowheads = new Map<string, ArrowheadSpec>();
-  const labels = new Map<string, LabelSpec>();
-  const targets: HitTarget<TData>[] = [];
-  const columnCounts = new Map<number, number>();
+  const batches: Batches<TData> = {
+    lines: new Map(),
+    nodes: new Map(),
+    arrowheads: new Map(),
+    labels: new Map(),
+    targets: [],
+    columnCounts: new Map(),
+  };
 
-  for (const event of data.getEvents()) {
-    const sourceRow = rowLayout.rowIndexById.get(event.sourceId);
-    const targetRow = rowLayout.rowIndexById.get(event.targetId);
-    if (sourceRow === undefined || targetRow === undefined) continue;
+  // Horizontal cull via the temporal index (§5), widened so an arrowhead or
+  // self-loop just off either edge is still drawn. The window is derived through
+  // the Camera, never raw pxPerMs (§3).
+  const tStart = camera.screenXToTime(-HORIZONTAL_MARGIN_PX);
+  const tEnd = camera.screenXToTime(viewport.cssWidth + HORIZONTAL_MARGIN_PX);
+  const windowEvents = ctx.data.getEventsInRange(tStart, tEnd);
 
-    // §5 row-interval cull: keep unless the spanned rows miss the band entirely.
-    const lo = Math.min(sourceRow, targetRow);
-    const hi = Math.max(sourceRow, targetRow);
-    if (hi < band.firstRow || lo > band.lastRow) continue;
+  // Vertical cull (§5 row-interval test): keep an arrow unless the rows it spans
+  // miss the band entirely, so a riser crossing the band with both endpoints
+  // off-screen is retained.
+  const visible: TimelineEvent<TData>[] = [];
+  for (const event of windowEvents) {
+    const rows = rowSpan(ctx, event);
+    if (rows === null) continue;
+    if (rows.hi < ctx.band.firstRow || rows.lo > ctx.band.lastRow) continue;
+    visible.push(event);
+  }
 
-    const baseX = camera.timeToScreenX(event.time);
-    if (
-      baseX + HORIZONTAL_MARGIN_PX < 0 ||
-      baseX - HORIZONTAL_MARGIN_PX > viewport.cssWidth
-    ) {
-      continue;
-    }
+  const labelsOn = camera.state.pxPerMs >= lod.eventLabelMinPxPerMs;
 
-    const column = Math.round(baseX);
-    const k = columnCounts.get(column) ?? 0;
-    columnCounts.set(column, k + 1);
-    const x = baseX + subLaneOffset(k);
-
-    const color = event.style?.arrowColor ?? theme.event.arrowColor;
-    const width = event.style?.arrowWidth ?? theme.event.arrowWidth;
-    const size = event.style?.arrowheadSize ?? theme.event.arrowheadSize;
-    const radius = event.style?.nodeRadius ?? theme.event.nodeRadius;
-
-    if (event.sourceId === event.targetId) {
-      addSelfLoop(
-        { lines, nodes, arrowheads, targets },
-        { color, width, size, radius },
-        x,
-        camera.rowToScreenY(sourceRow) + halfRow,
-        event,
-      );
-      if (event.label !== undefined) {
-        pushEventLabel(labels, event.label, theme, event, {
-          x: x + size * 2 + EVENT_LABEL_GAP_PX,
-          y: camera.rowToScreenY(sourceRow) + halfRow,
-        });
+  if (clustering.enabled) {
+    const clusterCtx: ClusterContext = {
+      minSeparationPx: clustering.minSeparationPx,
+      timeToScreenX: (t) => camera.timeToScreenX(t),
+    };
+    for (const cluster of clusterEvents(
+      visible,
+      clustering.strategy,
+      clusterCtx,
+    )) {
+      const [first] = cluster.events;
+      if (cluster.events.length === 1 && first !== undefined) {
+        addSingleArrow(batches, ctx, first, labelsOn);
+      } else {
+        addCluster(batches, ctx, cluster.events);
       }
-      continue;
     }
-
-    const ySource = camera.rowToScreenY(sourceRow) + halfRow;
-    const yTarget = camera.rowToScreenY(targetRow) + halfRow;
-    lineBatch(lines, color, width).segments.push({
-      x1: x,
-      y1: ySource,
-      x2: x,
-      y2: yTarget,
-    });
-    nodeBatch(nodes, color, radius).items.push({ x, y: ySource });
-    arrowheadBatch(arrowheads, color, size).items.push({
-      x,
-      y: yTarget,
-      angle: yTarget > ySource ? ANGLE_DOWN : ANGLE_UP,
-    });
-    targets.push({
-      kind: 'event',
-      event,
-      segments: [{ x1: x, y1: ySource, x2: x, y2: yTarget }],
-      arrowhead: { x, y: yTarget },
-      node: { x, y: ySource },
-      width,
-      arrowheadSize: size,
-    });
-    if (event.label !== undefined) {
-      pushEventLabel(labels, event.label, theme, event, {
-        x: x + width / 2 + EVENT_LABEL_GAP_PX,
-        y: (ySource + yTarget) / 2,
-      });
-    }
+  } else {
+    for (const event of visible) addSingleArrow(batches, ctx, event, labelsOn);
   }
 
   return {
-    lines: [...lines.values()],
-    nodes: [...nodes.values()],
-    arrowheads: [...arrowheads.values()],
-    labels: [...labels.values()],
-    targets,
+    lines: [...batches.lines.values()],
+    nodes: [...batches.nodes.values()],
+    arrowheads: [...batches.arrowheads.values()],
+    labels: [...batches.labels.values()],
+    targets: batches.targets,
   };
+}
+
+/** The inclusive row interval an event spans, or `null` if an endpoint is unrowed. */
+function rowSpan<TData>(
+  ctx: BuildContext<TData>,
+  event: TimelineEvent<TData>,
+): { lo: number; hi: number; sourceRow: number; targetRow: number } | null {
+  const sourceRow = ctx.rowLayout.rowIndexById.get(event.sourceId);
+  const targetRow = ctx.rowLayout.rowIndexById.get(event.targetId);
+  if (sourceRow === undefined || targetRow === undefined) return null;
+  return {
+    lo: Math.min(sourceRow, targetRow),
+    hi: Math.max(sourceRow, targetRow),
+    sourceRow,
+    targetRow,
+  };
+}
+
+/** Draw one event as an ordinary arrow (riser + node + arrowhead, or self-loop). */
+function addSingleArrow<TData>(
+  batches: Batches<TData>,
+  ctx: BuildContext<TData>,
+  event: TimelineEvent<TData>,
+  labelsOn: boolean,
+): void {
+  const rows = rowSpan(ctx, event);
+  if (rows === null) return;
+  const { camera, theme } = ctx;
+  const halfRow = theme.rowHeight / 2;
+
+  const baseX = camera.timeToScreenX(event.time);
+  const column = Math.round(baseX);
+  const k = batches.columnCounts.get(column) ?? 0;
+  batches.columnCounts.set(column, k + 1);
+  const x = baseX + subLaneOffset(k);
+
+  const color = event.style?.arrowColor ?? theme.event.arrowColor;
+  const width = event.style?.arrowWidth ?? theme.event.arrowWidth;
+  const size = event.style?.arrowheadSize ?? theme.event.arrowheadSize;
+  const radius = event.style?.nodeRadius ?? theme.event.nodeRadius;
+
+  if (event.sourceId === event.targetId) {
+    const y = camera.rowToScreenY(rows.sourceRow) + halfRow;
+    addSelfLoop(batches, { color, width, size, radius }, x, y, event);
+    if (labelsOn && event.label !== undefined) {
+      pushEventLabel(batches.labels, event.label, theme, event, {
+        x: x + size * 2 + EVENT_LABEL_GAP_PX,
+        y,
+      });
+    }
+    return;
+  }
+
+  const ySource = camera.rowToScreenY(rows.sourceRow) + halfRow;
+  const yTarget = camera.rowToScreenY(rows.targetRow) + halfRow;
+  lineBatch(batches.lines, color, width).segments.push({
+    x1: x,
+    y1: ySource,
+    x2: x,
+    y2: yTarget,
+  });
+  nodeBatch(batches.nodes, color, radius).items.push({ x, y: ySource });
+  arrowheadBatch(batches.arrowheads, color, size).items.push({
+    x,
+    y: yTarget,
+    angle: yTarget > ySource ? ANGLE_DOWN : ANGLE_UP,
+  });
+  batches.targets.push({
+    kind: 'event',
+    event,
+    segments: [{ x1: x, y1: ySource, x2: x, y2: yTarget }],
+    arrowhead: { x, y: yTarget },
+    node: { x, y: ySource },
+    width,
+    arrowheadSize: size,
+  });
+  if (labelsOn && event.label !== undefined) {
+    pushEventLabel(batches.labels, event.label, theme, event, {
+      x: x + width / 2 + EVENT_LABEL_GAP_PX,
+      y: (ySource + yTarget) / 2,
+    });
+  }
+}
+
+/**
+ * Draw a collapsed cluster (§6): a riser spanning the members' row interval, a
+ * count marker at its midpoint, and an "×N" label. Direction is ambiguous once
+ * many events merge, so no arrowhead is drawn; the marker carries the meaning.
+ */
+function addCluster<TData>(
+  batches: Batches<TData>,
+  ctx: BuildContext<TData>,
+  events: TimelineEvent<TData>[],
+): void {
+  const { camera, theme } = ctx;
+  const halfRow = theme.rowHeight / 2;
+
+  let minRow = Infinity;
+  let maxRow = -Infinity;
+  let sumX = 0;
+  let placed = 0;
+  for (const event of events) {
+    const rows = rowSpan(ctx, event);
+    if (rows === null) continue;
+    minRow = Math.min(minRow, rows.lo);
+    maxRow = Math.max(maxRow, rows.hi);
+    sumX += camera.timeToScreenX(event.time);
+    placed += 1;
+  }
+  if (placed === 0) return;
+
+  // Average only over the events that contributed an x (those with a row pair),
+  // so the marker stays centred even if the row-span and cull paths ever desync.
+  const x = sumX / placed;
+  const yTop = camera.rowToScreenY(minRow) + halfRow;
+  const yBot = camera.rowToScreenY(maxRow) + halfRow;
+  const yMid = (yTop + yBot) / 2;
+  const color = theme.clusterColor;
+  const width = theme.event.arrowWidth;
+  const markerRadius = theme.event.nodeRadius + CLUSTER_MARKER_BONUS_PX;
+
+  // Riser only when the cluster spans more than one row (else it is a point).
+  const segments = yTop !== yBot ? [{ x1: x, y1: yTop, x2: x, y2: yBot }] : [];
+  if (segments.length > 0) {
+    lineBatch(batches.lines, color, width).segments.push(...segments);
+  }
+  nodeBatch(batches.nodes, color, markerRadius).items.push({ x, y: yMid });
+  labelBatch(batches.labels, color, theme.event.labelFont).items.push({
+    x: x + markerRadius + EVENT_LABEL_GAP_PX,
+    y: yMid,
+    text: `×${events.length}`,
+  });
+  batches.targets.push({
+    kind: 'cluster',
+    events,
+    segments,
+    marker: { x, y: yMid },
+    markerSize: markerRadius,
+    width,
+  });
 }
 
 /**
@@ -155,12 +281,7 @@ export function buildArrows<TData>(
  * downward arrowhead, with the source dot on the line. No inter-row riser (§1).
  */
 function addSelfLoop<TData>(
-  batches: {
-    lines: Map<string, LineSpec>;
-    nodes: Map<string, NodeSpec>;
-    arrowheads: Map<string, ArrowheadSpec>;
-    targets: HitTarget<TData>[];
-  },
+  batches: Batches<TData>,
   style: { color: string; width: number; size: number; radius: number },
   x: number,
   y: number,

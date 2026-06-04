@@ -4,7 +4,14 @@ import { computeRowLayout } from '../layout/positions';
 import type { TimelineEvent } from '../model/types';
 import { Camera, type RowMetrics, type Viewport } from '../scale/camera';
 import { buildArrows, subLaneOffset } from './arrows';
-import type { BuildContext, DataAccess, RowBand } from './specs';
+import { bySourceTargetColumn } from '../cluster/strategies';
+import type {
+  BuildContext,
+  ClusteringConfig,
+  DataAccess,
+  LodConfig,
+  RowBand,
+} from './specs';
 
 const metrics: RowMetrics = {
   headerHeight: defaultTheme.headerHeight,
@@ -23,21 +30,48 @@ const ev = (
   },
 ): TimelineEvent => ({ id: 'e', label: undefined, ...partial });
 
-function ctxFor(events: TimelineEvent[], band: RowBand): BuildContext {
+interface CtxOpts {
+  camera?: Camera;
+  lod?: Partial<LodConfig>;
+  clustering?: Partial<ClusteringConfig>;
+}
+
+function ctxFor(
+  events: TimelineEvent[],
+  band: RowBand,
+  opts: CtxOpts = {},
+): BuildContext {
   const data: DataAccess = {
     getEvents: () => events,
+    // Mirror the store: the temporal-index slice is time-sorted, which the
+    // clustering sweep relies on (cluster.ts §6).
+    getEventsInRange: (a, b) =>
+      events
+        .filter((e) => e.time >= a && e.time <= b)
+        .sort((x, y) => x.time - y.time),
     getElements: () => [],
     getElementById: () => undefined,
     getExtent: () => undefined,
   };
   return {
-    camera: new Camera(metrics, { originTime: 0, pxPerMs: 1, scrollY: 0 }),
+    camera:
+      opts.camera ??
+      new Camera(metrics, { originTime: 0, pxPerMs: 1, scrollY: 0 }),
     rowLayout: computeRowLayout(rowIds, metrics),
     data,
     viewport,
     theme: defaultTheme,
     band,
     resolveIcon: () => ({ kind: 'none' }),
+    // Default off so the geometry tests exercise the single-arrow path; labels
+    // always on. The clustering/LOD suites opt in via `opts`.
+    lod: { eventLabelMinPxPerMs: 0, ...opts.lod },
+    clustering: {
+      enabled: false,
+      strategy: bySourceTargetColumn,
+      minSeparationPx: 12,
+      ...opts.clustering,
+    },
   };
 }
 
@@ -210,5 +244,75 @@ describe('buildArrows culling (§5 row-interval test)', () => {
       ctxFor([ev({ sourceId: 'r0', targetId: 'r2', time: 100_000 })], fullBand),
     );
     expect(r.lines).toHaveLength(0);
+  });
+
+  it('uses the temporal range query: only in-window events are considered', () => {
+    // The window is [-48, 848] at pxPerMs 1 / origin 0; 500 is in, 100_000 out.
+    const r = buildArrows(
+      ctxFor(
+        [
+          ev({ id: 'in', sourceId: 'r0', targetId: 'r2', time: 500 }),
+          ev({ id: 'out', sourceId: 'r0', targetId: 'r2', time: 100_000 }),
+        ],
+        fullBand,
+      ),
+    );
+    expect(r.lines[0]!.segments).toHaveLength(1);
+  });
+});
+
+describe('buildArrows label LOD (§6)', () => {
+  const labelled = ev({
+    sourceId: 'r0',
+    targetId: 'r2',
+    time: 100,
+    label: '$5',
+  });
+
+  it('draws the event label at/above the zoom threshold', () => {
+    const r = buildArrows(
+      ctxFor([labelled], fullBand, { lod: { eventLabelMinPxPerMs: 1 } }),
+    );
+    expect(r.labels[0]?.items[0]?.text).toBe('$5');
+  });
+
+  it('suppresses the event label below the zoom threshold', () => {
+    // Camera pxPerMs is 1; a threshold above it hides the label.
+    const r = buildArrows(
+      ctxFor([labelled], fullBand, { lod: { eventLabelMinPxPerMs: 2 } }),
+    );
+    expect(r.labels).toHaveLength(0);
+    // Geometry is still drawn — only the label is suppressed.
+    expect(r.lines[0]!.segments).toHaveLength(1);
+  });
+});
+
+describe('buildArrows clustering (§6)', () => {
+  const clusterOn = { clustering: { enabled: true } };
+
+  it('collapses dense same-pair events into one count marker', () => {
+    // Three r0→r2 events 3px apart (< minSeparationPx 12) collapse to one.
+    const events = [
+      ev({ id: 'a', sourceId: 'r0', targetId: 'r2', time: 100 }),
+      ev({ id: 'b', sourceId: 'r0', targetId: 'r2', time: 103 }),
+      ev({ id: 'c', sourceId: 'r0', targetId: 'r2', time: 106 }),
+    ];
+    const r = buildArrows(ctxFor(events, fullBand, clusterOn));
+    // No per-event arrowheads; one cluster marker labelled ×3.
+    expect(r.arrowheads).toHaveLength(0);
+    expect(r.labels[0]?.items[0]?.text).toBe('×3');
+    const target = r.targets[0]!;
+    expect(target.kind).toBe('cluster');
+    if (target.kind === 'cluster') expect(target.events).toHaveLength(3);
+  });
+
+  it('leaves well-separated events as ordinary arrows', () => {
+    const events = [
+      ev({ id: 'a', sourceId: 'r0', targetId: 'r2', time: 100 }),
+      ev({ id: 'b', sourceId: 'r0', targetId: 'r2', time: 400 }),
+    ];
+    const r = buildArrows(ctxFor(events, fullBand, clusterOn));
+    expect(r.arrowheads[0]!.items).toHaveLength(2);
+    expect(r.targets.every((t) => t.kind === 'event')).toBe(true);
   });
 });

@@ -273,6 +273,136 @@ describe('TimelineEngine interactions (§9, §12)', () => {
   });
 });
 
+describe('TimelineEngine clustering & LOD (§6)', () => {
+  // A dense burst of same-pair events plus two extent anchors, framed full-width.
+  const burstData = (count: number): TimelineData => {
+    const start = Date.UTC(2026, 0, 1);
+    const end = Date.UTC(2026, 11, 31);
+    const burst = Date.UTC(2026, 6, 1);
+    const day = 86_400_000;
+    return {
+      elements: [
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ],
+      events: [
+        { id: 'lo', sourceId: 'a', targetId: 'b', time: start },
+        { id: 'hi', sourceId: 'a', targetId: 'b', time: end },
+        ...Array.from({ length: count }, (_, i) => ({
+          id: `burst-${i}`,
+          sourceId: 'a',
+          targetId: 'b',
+          time: burst + i * day,
+        })),
+      ],
+    };
+  };
+
+  function drawAndCountArcs(options?: {
+    clustering?: { enabled?: boolean };
+  }): number {
+    let arcs = 0;
+    let queued: Array<() => void> = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      queued.push(cb);
+      return queued.length;
+    });
+    const flush = () => {
+      const run = queued;
+      queued = [];
+      for (const cb of run) cb();
+    };
+    const engine = new TimelineEngine(
+      makeRecordingCanvas((name) => {
+        if (name === 'arc') arcs++;
+      }),
+      makeRecordingCanvas(() => {}),
+      options,
+    );
+    engine.resize(800, 400, 1);
+    engine.setData(burstData(20));
+    flush();
+    engine.dispose();
+    return arcs;
+  }
+
+  it('collapses dense events at zoom-out, drawing far fewer node markers', () => {
+    const clustered = drawAndCountArcs();
+    const unclustered = drawAndCountArcs({ clustering: { enabled: false } });
+    // 20 burst events → one marker when clustered, ~20 dots when not.
+    expect(clustered).toBeLessThan(unclustered);
+  });
+
+  it('clicking a cluster expands it by zooming to its member span', () => {
+    // Capture the overlay's pointer listeners so a press+release drives a click.
+    const listeners = new Map<string, (e: unknown) => void>();
+    let queued: Array<() => void> = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      queued.push(cb);
+      return queued.length;
+    });
+    const flush = () => {
+      const run = queued;
+      queued = [];
+      for (const cb of run) cb();
+    };
+    const overlay = {
+      width: 0,
+      height: 0,
+      getContext: () =>
+        new Proxy(
+          { measureText: (t: string) => ({ width: t.length * 6 }) },
+          { get: (tgt, k) => (k in tgt ? Reflect.get(tgt, k) : () => {}) },
+        ),
+      addEventListener: (type: string, fn: (e: unknown) => void) =>
+        listeners.set(type, fn),
+      removeEventListener: () => {},
+      setPointerCapture: () => {},
+      releasePointerCapture: () => {},
+      hasPointerCapture: () => false,
+      getBoundingClientRect: () => ({ left: 0, top: 0 }),
+    } as unknown as HTMLCanvasElement;
+
+    const engine = new TimelineEngine(makeCanvas(), overlay);
+    engine.resize(800, 400, 1);
+    engine.setData(burstData(5));
+    flush(); // builds the hit grid with the cluster marker
+
+    const before = engine.getViewport();
+    const beforeSpan = before.timeRange[1] - before.timeRange[0];
+
+    // The cluster marker sits at the mean screen-x of the burst, mid-rows a/b.
+    const burst = Date.UTC(2026, 6, 1);
+    const day = 86_400_000;
+    const meanTime = burst + 2 * day; // mean of 5 days centred on +2
+    const x = (meanTime - before.timeRange[0]) * before.pxPerMs;
+    const rowCenter = (row: number) => 44 + row * (28 + 6) + 28 / 2; // header + rows from defaultTheme
+    const y = (rowCenter(0) + rowCenter(1)) / 2;
+
+    let viewportChanges = 0;
+    engine.on('viewportChange', () => viewportChanges++);
+
+    const press = listeners.get('pointerdown');
+    const release = listeners.get('pointerup');
+    const evt = {
+      pointerId: 1,
+      clientX: x,
+      clientY: y,
+      ctrlKey: false,
+      metaKey: false,
+      shiftKey: false,
+    };
+    press?.(evt);
+    release?.(evt);
+
+    const after = engine.getViewport();
+    const afterSpan = after.timeRange[1] - after.timeRange[0];
+    expect(viewportChanges).toBeGreaterThan(0);
+    expect(afterSpan).toBeLessThan(beforeSpan); // zoomed in to expand
+    engine.dispose();
+  });
+});
+
 describe('TimelineEngine Phase 2 content (§1, §4)', () => {
   it('emits arrows, nodes, and labels when a frame draws', () => {
     const calls: Record<string, number> = {};

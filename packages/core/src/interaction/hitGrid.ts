@@ -48,6 +48,16 @@ function boundsOf(target: HitTarget): Bounds {
     consume(s.x1, s.y1);
     consume(s.x2, s.y2);
   }
+  if (target.kind === 'cluster') {
+    consume(target.marker.x, target.marker.y);
+    const pad = BBOX_PAD_PX + Math.max(target.width, target.markerSize);
+    return {
+      minX: minX - pad,
+      minY: minY - pad,
+      maxX: maxX + pad,
+      maxY: maxY + pad,
+    };
+  }
   if (target.arrowhead) consume(target.arrowhead.x, target.arrowhead.y);
   if (target.node) consume(target.node.x, target.node.y);
   const pad = BBOX_PAD_PX + Math.max(target.width, target.arrowheadSize);

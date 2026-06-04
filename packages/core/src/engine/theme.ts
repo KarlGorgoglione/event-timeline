@@ -16,6 +16,7 @@ export const defaultTheme: Theme = {
   labelPadding: 8,
   hoverColor: '#ffd166',
   selectionColor: '#4fc3f7',
+  clusterColor: '#d29922',
   element: {
     lineColor: '#5aa0ff',
     lineWidth: 2,

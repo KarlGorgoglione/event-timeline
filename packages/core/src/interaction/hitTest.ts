@@ -27,39 +27,13 @@ export function hitTest<TData>(
   y: number,
   tolerance: number = HIT_TOLERANCE_PX,
 ): HitResult<TData> | null {
-  let bestEvent: Candidate<TData> | null = null;
+  // Arrows and cluster markers share the top draw layer; element lines sit
+  // beneath. So `bestTop` (event or cluster) wins over `bestElement` at a point.
+  let bestTop: Candidate<TData> | null = null;
   let bestElement: Candidate<TData> | null = null;
 
   for (const target of grid.query(x, y)) {
-    if (target.kind === 'event') {
-      let distSq = Infinity;
-      for (const s of target.segments) {
-        distSq = Math.min(
-          distSq,
-          distSqToSegment(x, y, s.x1, s.y1, s.x2, s.y2),
-        );
-      }
-      // The arrowhead is a filled triangle; treat its bounding box as solid.
-      if (
-        target.arrowhead !== undefined &&
-        inSquare(
-          x,
-          y,
-          target.arrowhead.x,
-          target.arrowhead.y,
-          target.arrowheadSize,
-        )
-      ) {
-        distSq = 0;
-      }
-      const tol = tolerance + target.width / 2;
-      if (
-        distSq <= tol * tol &&
-        (bestEvent === null || distSq < bestEvent.distSq)
-      ) {
-        bestEvent = { target, distSq };
-      }
-    } else {
+    if (target.kind === 'element') {
       const distSq = distSqToSegment(
         x,
         y,
@@ -75,12 +49,49 @@ export function hitTest<TData>(
       ) {
         bestElement = { target, distSq };
       }
+      continue;
+    }
+
+    let distSq = Infinity;
+    for (const s of target.segments) {
+      distSq = Math.min(distSq, distSqToSegment(x, y, s.x1, s.y1, s.x2, s.y2));
+    }
+    if (target.kind === 'event') {
+      // The arrowhead is a filled triangle; treat its bounding box as solid.
+      if (
+        target.arrowhead !== undefined &&
+        inSquare(
+          x,
+          y,
+          target.arrowhead.x,
+          target.arrowhead.y,
+          target.arrowheadSize,
+        )
+      ) {
+        distSq = 0;
+      }
+    } else if (
+      inSquare(x, y, target.marker.x, target.marker.y, target.markerSize)
+    ) {
+      // Cluster: its count marker is a solid box around the riser midpoint.
+      distSq = 0;
+    }
+    const tol = tolerance + target.width / 2;
+    if (distSq <= tol * tol && (bestTop === null || distSq < bestTop.distSq)) {
+      bestTop = { target, distSq };
     }
   }
 
-  // Events (arrows) sit above element lines, so they win at the same point.
-  if (bestEvent !== null && bestEvent.target.kind === 'event') {
-    return { kind: 'event', event: bestEvent.target.event };
+  if (bestTop !== null) {
+    const target = bestTop.target;
+    if (target.kind === 'event') return { kind: 'event', event: target.event };
+    if (target.kind === 'cluster') {
+      return {
+        kind: 'cluster',
+        events: target.events,
+        count: target.events.length,
+      };
+    }
   }
   if (bestElement !== null && bestElement.target.kind === 'element') {
     return { kind: 'element', element: bestElement.target.element };

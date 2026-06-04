@@ -25,11 +25,23 @@ export type {
 } from './model/diagnostics';
 
 export { TimelineEngine } from './engine/timeline';
-export type { TimelineEngineOptions } from './engine/timeline';
+export type {
+  TimelineEngineOptions,
+  ClusteringOptions,
+  LodOptions,
+} from './engine/timeline';
 export type { TimelineEventMap } from './engine/emitter';
 
 export { byFirstEvent } from './layout/byFirstEvent';
 export type { LayoutStrategy } from './layout/types';
+
+export {
+  byPixelColumn,
+  byElementPair,
+  byDay,
+  bySourceTargetColumn,
+} from './cluster/strategies';
+export type { ClusterStrategy, ClusterContext, Cluster } from './cluster/types';
 
 export { defaultTheme } from './engine/theme';
 
