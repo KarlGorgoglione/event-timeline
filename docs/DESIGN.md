@@ -809,6 +809,28 @@ Carried over from the Phase 1 review; none block Phase 1 acceptance:
 - **`scaleFontToDevice` scales only the first `px` token.** Fine for current themes;
   tighten to handle `12px/16px` line-height shorthands if custom fonts are exposed.
 
+### Phase 2 implementation notes & follow-ups
+
+Carried over from the Phase 2 review; none block Phase 2 acceptance:
+
+- **Opaque image handle on the seam.** `ImageBatch` carries `RendererImage` (an
+  opaque `unknown` handle), not `HTMLImageElement`, so the `Renderer` interface
+  stays free of DOM types and the §4 substitutability claim holds. The engine
+  treats icons as black boxes: `Canvas2DRenderer` narrows the handle to a
+  `CanvasImageSource` at the single `drawImage` site, and a future `WebGLRenderer`
+  would upload it as a texture. Engine-internal icon code (the icon cache) still
+  uses concrete `HTMLImageElement`; it widens to the handle at the snap boundary.
+- **Header mask.** Because Phase 2 content is row-anchored and can scroll partway
+  under the header, `drawBase` repaints the header background band over
+  `[0,0,cssWidth,headerHeight]` *after* content and *before* the header baseline +
+  ticks (§4), so arrows/labels never bleed over the header. A new backend-neutral
+  `fillRect` verb backs this; if more rect fills appear, fold it into a batched
+  `drawRects` verb for seam consistency.
+- **Sub-lane column keying uses un-snapped CSS px** (`Math.round(baseX)`). Deterministic
+  and good enough per the §16 "accepts residual overlap" stance; at very high DPR two
+  events <1 CSS px apart share a column. Revisit only if clustering (Phase 4) doesn't
+  already collapse such cases.
+
 ---
 
 ## 17. Verification (how to validate the build end-to-end)

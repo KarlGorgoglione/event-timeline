@@ -75,11 +75,20 @@ export interface NodeBatch {
   items: NodeItem[];
 }
 
+/**
+ * An opaque, backend-specific image handle (§4, §16). The seam treats element
+ * icons as black boxes so it leaks no DOM type: `Canvas2DRenderer` narrows this
+ * to a `CanvasImageSource`, while a future `WebGLRenderer` would upload it as a
+ * texture. Engine-internal icon code (the icon cache) supplies `HTMLImageElement`,
+ * which widens to this handle at the snap boundary.
+ */
+export type RendererImage = unknown;
+
 export interface ImageItem {
   x: number;
   y: number;
   size: number;
-  image: HTMLImageElement;
+  image: RendererImage;
 }
 
 export interface ImageBatch {
@@ -90,6 +99,14 @@ export interface Renderer {
   resize(deviceWidth: number, deviceHeight: number): void;
   /** Clear/prepare a layer for drawing. */
   beginFrame(layer: Layer): void;
+  /** Fill a device-px rectangle with a solid colour (e.g. the header mask, §4). */
+  fillRect(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    color: string,
+  ): void;
   drawLines(batch: LineBatch): void;
   drawArrowheads(batch: ArrowheadBatch): void;
   drawNodes(batch: NodeBatch): void;

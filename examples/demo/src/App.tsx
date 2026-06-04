@@ -1,14 +1,22 @@
-import { useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { Timeline, type TimelineHandle } from '@timeline/react';
 import { demoData } from './fixture';
+import { makeSynthetic } from './synthetic';
 
 /**
- * Phase 1 demo: renders element lines at correct times under a basic adaptive
- * time header, with smooth horizontal pan (drag the canvas). "Fit" reframes the
- * data via the imperative handle.
+ * Phase 2 demo: direction-aware arrows (riser + source dot + arrowhead), event
+ * labels, and element label+icon at each line start with a sticky-left fallback,
+ * all culled to the viewport. "Fit" reframes via the imperative handle; "10k"
+ * swaps in a synthetic dataset to show culling at scale (drag to pan).
  */
 export function App() {
   const ref = useRef<TimelineHandle>(null);
+  const [big, setBig] = useState(false);
+
+  // Memoized so the referential-stability contract holds (§12): a stable `data`
+  // reference avoids a full setData on every render. The 10k set is built once.
+  const synthetic = useMemo(() => makeSynthetic(), []);
+  const data = big ? synthetic : demoData;
 
   return (
     <main
@@ -37,9 +45,17 @@ export function App() {
         >
           Fit
         </button>
+        <button
+          type="button"
+          data-testid="toggle-dataset"
+          onClick={() => setBig((v) => !v)}
+          style={{ font: '12px system-ui' }}
+        >
+          {big ? 'Sample' : '10k'}
+        </button>
       </header>
       <div style={{ flex: 1, minHeight: 0 }}>
-        <Timeline ref={ref} data={demoData} style={{ background: '#161b22' }} />
+        <Timeline ref={ref} data={data} style={{ background: '#161b22' }} />
       </div>
     </main>
   );

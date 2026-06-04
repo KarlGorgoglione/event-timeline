@@ -14,14 +14,18 @@ a numbered phased delivery plan (§15). Read the relevant section before
 implementing — code comments reference these sections by number (e.g. "§5",
 "DESIGN.md §12"). Keep that habit when adding code.
 
-**Current state: Phase 1 complete (core skeleton & static lines).** The engine
-renders element lines at correct times under an adaptive time header with smooth
-horizontal pan: `@timeline/core` ships the model/store, `Camera`, adaptive
-ticks, layout, the backend-free `Renderer` + `Canvas2DRenderer`, the rAF
-dirty-flag scheduler, and `TimelineEngine`; `@timeline/react` wires the canvases,
-`ResizeObserver`, and prop sync; the demo renders a hardcoded fixture. Arrows,
-nodes, labels, zoom, hit-testing, the temporal index, and richer layout land in
-Phase 2+. When building a feature, find its phase in §15 and its design section
+**Current state: Phase 2 complete (arrows, labels, element identity).** On top
+of the Phase 1 skeleton, the engine now renders direction-aware orthogonal
+arrows (riser + source node dot + target arrowhead), self-event loop glyphs,
+event labels, and element label+icon at each line start with a sticky-left
+fallback, all culled by the §5 row-interval test. `drawBase` is decomposed into
+pure CSS-px "primitive builder" modules (`render/{specs,rowBand,elementLines,
+arrows,snap,iconCache,batch}.ts`) that return draw specs; a single snap pass
+converts to device px and the engine orchestrates build→snap→draw. The
+`Renderer` seam stays backend-free (`ImageBatch` carries an opaque
+`RendererImage`); the demo gains a 10k synthetic-dataset toggle. Zoom,
+hit-testing, the temporal index, LOD/clustering, and richer layout land in
+Phase 3+. When building a feature, find its phase in §15 and its design section
 first.
 
 ## Commands

@@ -11,13 +11,25 @@ import { computeRowLayout, type RowLayout } from '../layout/positions';
 import type { OnDiagnostic } from '../model/diagnostics';
 import { DataStore } from '../model/store';
 import type { TimelineData, Theme, Time } from '../model/types';
+import { buildArrows } from '../render/arrows';
 import { Canvas2DRenderer } from '../render/canvas2d';
 import {
   hairlineOffset,
   scaleFontToDevice,
   snapDevice,
 } from '../render/device';
-import type { LineBatch, LineSegment } from '../render/types';
+import { buildElementLines } from '../render/elementLines';
+import { IconCache, isIconUrl } from '../render/iconCache';
+import { visibleRowBand } from '../render/rowBand';
+import {
+  snapArrowheads,
+  snapIcons,
+  snapLabels,
+  snapLines,
+  snapNodes,
+} from '../render/snap';
+import type { BuildContext, ResolveIcon } from '../render/specs';
+import type { LineSegment } from '../render/types';
 import {
   Camera,
   computeZoomBounds,
@@ -37,8 +49,6 @@ export interface TimelineEngineOptions {
   layout?: LayoutStrategy;
 }
 
-/** A few CSS px of line drawn before an element's first event (§1). */
-const LINE_LEAD_PAD_PX = 6;
 /** Minimum pixel spacing header labels need (§8). */
 const MIN_LABEL_GAP_PX = 64;
 
@@ -52,6 +62,27 @@ export class TimelineEngine<TData = unknown> {
   private readonly emitter = new TypedEmitter<TimelineEventMap<TData>>();
   private readonly pan: PanController;
   private readonly layoutStrategy: LayoutStrategy;
+  private readonly iconCache = new IconCache(() =>
+    this.scheduler.markDirty('base'),
+  );
+
+  /**
+   * Resolve an element icon for the current frame (§1, §11): a preloaded image
+   * is used directly when decoded, a URL is loaded/cached (skipped until ready),
+   * and any other string (emoji/glyph) is drawn as text by the builder.
+   */
+  private readonly resolveIcon: ResolveIcon = (icon) => {
+    if (typeof icon !== 'string') {
+      return icon.complete && icon.naturalWidth > 0
+        ? { kind: 'image', image: icon }
+        : { kind: 'none' };
+    }
+    if (isIconUrl(icon)) {
+      const image = this.iconCache.get(icon);
+      return image ? { kind: 'image', image } : { kind: 'none' };
+    }
+    return { kind: 'text', text: icon };
+  };
 
   private viewport: Viewport = { cssWidth: 0, cssHeight: 0 };
   private dpr = 1;
@@ -238,36 +269,26 @@ export class TimelineEngine<TData = unknown> {
     const dpr = this.dpr;
     this.renderer.beginFrame('base');
 
-    const tStart = this.camera.screenXToTime(0);
-    const tEnd = this.camera.screenXToTime(cssWidth);
     const ticks = generateTicks(
-      tStart,
-      tEnd,
+      this.camera.screenXToTime(0),
+      this.camera.screenXToTime(cssWidth),
       this.camera.state.pxPerMs,
       MIN_LABEL_GAP_PX,
     );
 
-    // Major gridlines run from the header bottom down through the content, plus
-    // a header baseline separator — all share the gridline style.
+    // Major gridlines run from the header bottom down through the content; drawn
+    // before content so element lines and arrows sit over them.
     const gridWidth = Math.max(1, snapDevice(1, dpr));
-    const gridSegments: LineSegment[] = [];
-    for (const tick of ticks.major) {
+    const gridSegments: LineSegment[] = ticks.major.map((tick) => {
       const x =
         snapDevice(this.camera.timeToScreenX(tick.time), dpr) +
         hairlineOffset(gridWidth);
-      gridSegments.push({
+      return {
         x1: x,
         y1: snapDevice(headerHeight, dpr),
         x2: x,
         y2: snapDevice(cssHeight, dpr),
-      });
-    }
-    const baselineY = snapDevice(headerHeight, dpr) + hairlineOffset(gridWidth);
-    gridSegments.push({
-      x1: 0,
-      y1: baselineY,
-      x2: snapDevice(cssWidth, dpr),
-      y2: baselineY,
+      };
     });
     this.renderer.drawLines({
       color: this.theme.gridlineColor,
@@ -275,46 +296,63 @@ export class TimelineEngine<TData = unknown> {
       segments: gridSegments,
     });
 
-    // Element lines, batched by resolved style.
-    const batches = new Map<string, LineBatch>();
-    for (const id of this.rowLayout.orderedIds) {
-      const extent = this.store.getExtent(id);
-      if (extent === undefined) continue; // event-less: not drawn (§1)
-      const rowIndex = this.rowLayout.rowIndexById.get(id);
-      if (rowIndex === undefined) continue;
+    // Content: build CSS-px primitives, snap to device px, draw bottom-to-top
+    // (lines → risers → source nodes → arrowheads → labels → icons).
+    const ctx: BuildContext<TData> = {
+      camera: this.camera,
+      rowLayout: this.rowLayout,
+      data: this.store,
+      viewport: this.viewport,
+      theme: this.theme,
+      band: visibleRowBand(
+        this.camera,
+        this.viewport,
+        this.rowLayout.rowCount,
+        headerHeight,
+      ),
+      resolveIcon: this.resolveIcon,
+    };
+    const elements = buildElementLines(ctx);
+    const arrows = buildArrows(ctx);
 
-      const cssY =
-        this.camera.rowToScreenY(rowIndex) + this.metrics.rowHeight / 2;
-      if (cssY < headerHeight || cssY > cssHeight) continue; // row off-screen
-
-      const x1Css =
-        this.camera.timeToScreenX(extent.minTime) - LINE_LEAD_PAD_PX;
-      const x2Css = this.camera.timeToScreenX(extent.maxTime);
-      if (x2Css < 0 || x1Css > cssWidth) continue; // line off-screen
-
-      const element = this.store.getElementById(id);
-      const color = element?.style?.lineColor ?? this.theme.element.lineColor;
-      const widthCss =
-        element?.style?.lineWidth ?? this.theme.element.lineWidth;
-      const width = Math.max(1, snapDevice(widthCss, dpr));
-      const y = snapDevice(cssY, dpr) + hairlineOffset(width);
-
-      const key = `${color}|${width}`;
-      let batch = batches.get(key);
-      if (batch === undefined) {
-        batch = { color, width, segments: [] };
-        batches.set(key, batch);
-      }
-      batch.segments.push({
-        x1: snapDevice(x1Css, dpr),
-        y1: y,
-        x2: snapDevice(x2Css, dpr),
-        y2: y,
-      });
+    for (const spec of elements.lines) {
+      this.renderer.drawLines(snapLines(spec, dpr));
     }
-    for (const batch of batches.values()) this.renderer.drawLines(batch);
+    for (const spec of arrows.lines) {
+      this.renderer.drawLines(snapLines(spec, dpr));
+    }
+    for (const spec of arrows.nodes) {
+      this.renderer.drawNodes(snapNodes(spec, dpr));
+    }
+    for (const spec of arrows.arrowheads) {
+      this.renderer.drawArrowheads(snapArrowheads(spec, dpr));
+    }
+    for (const spec of arrows.labels) {
+      this.renderer.drawText(snapLabels(spec, dpr));
+    }
+    for (const spec of elements.labels) {
+      this.renderer.drawText(snapLabels(spec, dpr));
+    }
+    this.renderer.drawImages(snapIcons(elements.icons, dpr));
 
-    // Header labels: major row above minor row (drawn last, over the grid).
+    // Header is drawn last (§4): mask any content that bled into the header
+    // band, then draw the baseline separator and the adaptive tick labels.
+    this.renderer.fillRect(
+      0,
+      0,
+      snapDevice(cssWidth, dpr),
+      snapDevice(headerHeight, dpr),
+      this.theme.background,
+    );
+    const baselineY = snapDevice(headerHeight, dpr) + hairlineOffset(gridWidth);
+    this.renderer.drawLines({
+      color: this.theme.gridlineColor,
+      width: gridWidth,
+      segments: [
+        { x1: 0, y1: baselineY, x2: snapDevice(cssWidth, dpr), y2: baselineY },
+      ],
+    });
+
     const headerFont = scaleFontToDevice(this.theme.headerFont, dpr);
     this.renderer.drawText({
       color: this.theme.headerTextColor,

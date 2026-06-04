@@ -66,6 +66,18 @@ export class Canvas2DRenderer implements Renderer {
     }
   }
 
+  fillRect(
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    color: string,
+  ): void {
+    const ctx = this.current;
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, width, height);
+  }
+
   drawLines(batch: LineBatch): void {
     if (batch.segments.length === 0) return;
     const ctx = this.current;
@@ -96,15 +108,58 @@ export class Canvas2DRenderer implements Renderer {
     return { width: this.baseCtx.measureText(text).width };
   }
 
-  // --- Phase 2 verbs: typed by the seam, implemented later. ---
-  drawArrowheads(_batch: ArrowheadBatch): void {
-    /* Phase 2 */
+  drawArrowheads(batch: ArrowheadBatch): void {
+    if (batch.items.length === 0) return;
+    const ctx = this.current;
+    const { size } = batch;
+    ctx.fillStyle = batch.color;
+    // One path for the whole batch: each item is a triangle pointing +x in local
+    // space (tip at +size), rotated by `angle` and translated to (x, y).
+    ctx.beginPath();
+    for (const { x, y, angle } of batch.items) {
+      const cos = Math.cos(angle);
+      const sin = Math.sin(angle);
+      const tipX = x + size * cos;
+      const tipY = y + size * sin;
+      // Base corners at local (-0.4·size, ±0.6·size).
+      const bx = -0.4 * size;
+      const wy = 0.6 * size;
+      const x1 = x + bx * cos - wy * sin;
+      const y1 = y + bx * sin + wy * cos;
+      const x2 = x + bx * cos + wy * sin;
+      const y2 = y + bx * sin - wy * cos;
+      ctx.moveTo(tipX, tipY);
+      ctx.lineTo(x1, y1);
+      ctx.lineTo(x2, y2);
+      ctx.closePath();
+    }
+    ctx.fill();
   }
-  drawNodes(_batch: NodeBatch): void {
-    /* Phase 2 */
+
+  drawNodes(batch: NodeBatch): void {
+    if (batch.items.length === 0) return;
+    const ctx = this.current;
+    ctx.fillStyle = batch.color;
+    ctx.beginPath();
+    for (const { x, y } of batch.items) {
+      // moveTo before each arc so circles are not joined by a connecting line.
+      ctx.moveTo(x + batch.radius, y);
+      ctx.arc(x, y, batch.radius, 0, Math.PI * 2);
+    }
+    ctx.fill();
   }
-  drawImages(_batch: ImageBatch): void {
-    /* Phase 2 */
+
+  drawImages(batch: ImageBatch): void {
+    const ctx = this.current;
+    for (const { x, y, size, image } of batch.items) {
+      try {
+        // The seam carries an opaque RendererImage; Canvas2D narrows it to a
+        // CanvasImageSource (§4). Only this backend knows the concrete type.
+        ctx.drawImage(image as CanvasImageSource, x, y, size, size);
+      } catch {
+        // An image that failed to decode throws on draw; skip it this frame.
+      }
+    }
   }
 
   endFrame(_layer: Layer): void {
