@@ -38,23 +38,58 @@ function mulberry32(seed: number): () => number {
 
 /** USD label with thousands separators (locale-independent → test-stable). */
 function usd(n: number): string {
-  return '$' + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return (
+    '$' +
+    Math.round(n)
+      .toString()
+      .replace(/\B(?=(\d{3})+(?!\d))/g, ',')
+  );
 }
 
 const EXTERNAL_NAMES = [
-  'Globex', 'Initech', 'Umbrella', 'Soylent', 'Hooli',
-  'Vehement', 'Massive Dynamic', 'Wonka', 'Stark Industries',
-  'Wayne Enterprises', 'Cyberdyne', 'Tyrell Corp', 'Acme',
-  'Gekko Capital', 'Oceanic', 'Nakatomi', 'Bluth Co', 'Pied Piper',
-  'Vandelay', 'Prestige WW', 'Sterling Cooper', 'Dunder Mifflin',
-  'Los Pollos', 'Genco', 'Oscorp',
+  'Globex',
+  'Initech',
+  'Umbrella',
+  'Soylent',
+  'Hooli',
+  'Vehement',
+  'Massive Dynamic',
+  'Wonka',
+  'Stark Industries',
+  'Wayne Enterprises',
+  'Cyberdyne',
+  'Tyrell Corp',
+  'Acme',
+  'Gekko Capital',
+  'Oceanic',
+  'Nakatomi',
+  'Bluth Co',
+  'Pied Piper',
+  'Vandelay',
+  'Prestige WW',
+  'Sterling Cooper',
+  'Dunder Mifflin',
+  'Los Pollos',
+  'Genco',
+  'Oscorp',
 ];
 
 const CASH_NAMES = [
-  'ATM Downtown', 'ATM Airport', 'ATM Mall', 'Cash Desk B1',
-  'Cash Desk B2', 'Cash Desk B3', 'FX Kiosk', 'Casino Royale',
-  'Money Service A', 'Money Service B', 'ATM Station', 'ATM Harbour',
-  'Cash Desk B4', 'Bureau de Change', 'ATM Uptown',
+  'ATM Downtown',
+  'ATM Airport',
+  'ATM Mall',
+  'Cash Desk B1',
+  'Cash Desk B2',
+  'Cash Desk B3',
+  'FX Kiosk',
+  'Casino Royale',
+  'Money Service A',
+  'Money Service B',
+  'ATM Station',
+  'ATM Harbour',
+  'Cash Desk B4',
+  'Bureau de Change',
+  'ATM Uptown',
 ];
 
 /** Element-id pools by kind, used to wire up payments. */
@@ -163,7 +198,9 @@ function addCircular(
     pools.clients[3]!,
     pools.clients[4]!,
   ];
-  ring.forEach((id, i) => flagActor(elements, id, `⚠ Ring-${i + 1}`, 'circular'));
+  ring.forEach((id, i) =>
+    flagActor(elements, id, `⚠ Ring-${i + 1}`, 'circular'),
+  );
   const base = START + 150 * DAY_MS;
   for (let i = 0; i < ring.length; i++) {
     const amount = 80_000 + Math.floor(rand() * 40_000);

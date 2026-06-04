@@ -166,9 +166,7 @@ export function App() {
     [huge],
   );
   const amlData = useMemo(() => makeAmlScenario(), []);
-  const data = aml
-    ? amlData
-    : (synthetic50k ?? (big ? synthetic : demoData));
+  const data = aml ? amlData : (synthetic50k ?? (big ? synthetic : demoData));
 
   return (
     <main
