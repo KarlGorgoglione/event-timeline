@@ -146,10 +146,42 @@ function addStructuring(
   }
 }
 
+/**
+ * Circular / round-tripping: a 4-hop loop A→B→C→D→A of large transfers over
+ * ~2 weeks, funds returning to the origin (layering).
+ */
+function addCircular(
+  elements: TimelineElement<DemoDatum>[],
+  events: TimelineEvent<DemoDatum>[],
+  pools: Pools,
+  rand: () => number,
+): void {
+  const ring = [
+    pools.clients[1]!,
+    pools.clients[2]!,
+    pools.clients[3]!,
+    pools.clients[4]!,
+  ];
+  ring.forEach((id, i) => flagActor(elements, id, `⚠ Ring-${i + 1}`, 'circular'));
+  const base = START + 150 * DAY_MS;
+  for (let i = 0; i < ring.length; i++) {
+    const amount = 80_000 + Math.floor(rand() * 40_000);
+    events.push({
+      id: `circ-${i}`,
+      sourceId: ring[i]!,
+      targetId: ring[(i + 1) % ring.length]!, // last hop → back to ring[0]
+      time: base + i * 4 * DAY_MS + Math.floor(rand() * DAY_MS),
+      label: usd(amount),
+      data: { category: PATTERN_CATEGORY.circular, pattern: 'circular' },
+    });
+  }
+}
+
 export function makeAmlScenario(seed = 1): TimelineData<DemoDatum> {
   const rand = mulberry32(seed);
   const { elements, pools } = makeEntities();
   const events: TimelineEvent<DemoDatum>[] = [];
   addStructuring(elements, events, pools, rand);
+  addCircular(elements, events, pools, rand);
   return { elements, events };
 }

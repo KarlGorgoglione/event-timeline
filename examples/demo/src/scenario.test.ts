@@ -43,3 +43,18 @@ describe('makeAmlScenario — structuring', () => {
     }
   });
 });
+
+describe('makeAmlScenario — circular', () => {
+  it('forms a loop that returns to the origin', () => {
+    const { events } = makeAmlScenario();
+    const ring = events.filter((e) => e.id.startsWith('circ-'));
+    expect(ring).toHaveLength(4);
+
+    // circ-0 … circ-3 in push order; the last hop targets the first source.
+    const first = ring[0]!;
+    const last = ring[ring.length - 1]!;
+    expect(last.targetId).toBe(first.sourceId);
+
+    for (const e of ring) expect(e.data?.pattern).toBe('circular');
+  });
+});
