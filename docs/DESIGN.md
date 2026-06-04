@@ -241,8 +241,9 @@ on the `Camera`/scale module, exposed as `timeToScreenX`, `screenXToTime`,
 `rowToScreenY`, `screenYToRow` (plus inverse helpers). The renderer, hit-test
 grid, and interaction state machine all call these — none re-derives
 `(t - originTime) * pxPerMs` inline. This keeps zoom-about-cursor, culling, and
-hit-testing provably consistent and is enforced by lint (no raw `pxPerMs`
-arithmetic outside the scale module).
+hit-testing provably consistent. As of Phase 1 the rule is upheld by convention
+and review, not a lint rule; a `no-restricted-syntax` guard against raw
+`pxPerMs` arithmetic outside the scale module is tracked in §16.
 
 **Device-pixel-ratio handling.** The backing store is `cssSize * dpr`, but the
 context is **not** pre-scaled (`ctx.scale` is *not* used). Instead the renderer
@@ -788,6 +789,25 @@ Each phase ends with a runnable demo and explicit acceptance criteria.
   out of scope for v1.
 - **Minimap / overview**, **PNG export**, **inertia panning** — deferred
   enhancements.
+
+### Phase 1 implementation notes & follow-ups
+
+Carried over from the Phase 1 review; none block Phase 1 acceptance:
+
+- **`date-fns` is a declared dep but not yet imported.** Phase 1 ticks use native
+  `Date.UTC` integer arithmetic for machine-stable boundaries (§8); the per-function
+  `date-fns` calendar math (§2) first lands when later phases need variable-length
+  interval stepping. Keep the dep provisioned, or drop it until then.
+- **No-raw-`pxPerMs` lint rule.** §3 relies on convention; add a
+  `no-restricted-syntax` ESLint guard so `time * pxPerMs` outside the scale module
+  is caught mechanically. (Would also flag `ticks.ts`'s `thinByPixels`, which uses a
+  *relative* `time * pxPerMs` metric that is correct but reads as absolute — rename
+  or route through a `timeToX` callback when the rule lands.)
+- **Vertical culling is center-only.** `drawBase` culls element rows by line-center
+  Y; Phase 2 (row-anchored labels/icons/arrows) should switch to a padded row-band
+  test so partially-visible rows aren't dropped.
+- **`scaleFontToDevice` scales only the first `px` token.** Fine for current themes;
+  tighten to handle `12px/16px` line-height shorthands if custom fonts are exposed.
 
 ---
 
