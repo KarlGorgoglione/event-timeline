@@ -58,3 +58,27 @@ describe('makeAmlScenario — circular', () => {
     for (const e of ring) expect(e.data?.pattern).toBe('circular');
   });
 });
+
+describe('makeAmlScenario — pass-through', () => {
+  it('moves most of a large inflow straight back out', () => {
+    const { events } = makeAmlScenario();
+    const inflow = events.find((e) => e.id === 'pass-in');
+    const outflows = events.filter((e) => e.id.startsWith('pass-out-'));
+    expect(inflow).toBeDefined();
+    expect(outflows).toHaveLength(3);
+
+    const mule = inflow!.targetId;
+    // All outflows leave the same mule, soon after the inflow.
+    for (const e of outflows) {
+      expect(e.sourceId).toBe(mule);
+      expect(e.time).toBeGreaterThan(inflow!.time);
+      expect(e.data?.pattern).toBe('passthrough');
+    }
+
+    // ~95% of the inflow is dispersed.
+    const inAmt = amountOf(inflow!.label);
+    const outAmt = outflows.reduce((s, e) => s + amountOf(e.label), 0);
+    expect(outAmt / inAmt).toBeGreaterThan(0.9);
+    expect(outAmt / inAmt).toBeLessThanOrEqual(1);
+  });
+});

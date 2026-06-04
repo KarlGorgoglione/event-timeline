@@ -177,11 +177,48 @@ function addCircular(
   }
 }
 
+/**
+ * Rapid pass-through: a mule receives one large sum then moves ~95% of it out
+ * to a few destinations within days (in-then-out layering).
+ */
+function addPassthrough(
+  elements: TimelineElement<DemoDatum>[],
+  events: TimelineEvent<DemoDatum>[],
+  pools: Pools,
+  rand: () => number,
+): void {
+  const mule = pools.clients[5]!;
+  flagActor(elements, mule, '⚠ Mule-A', 'passthrough');
+  const inflow = 250_000;
+  const inTime = START + 200 * DAY_MS;
+  events.push({
+    id: 'pass-in',
+    sourceId: pools.external[10]!,
+    targetId: mule,
+    time: inTime,
+    label: usd(inflow),
+    data: { category: PATTERN_CATEGORY.passthrough, pattern: 'passthrough' },
+  });
+  const outs = [pools.external[11]!, pools.external[12]!, pools.external[13]!];
+  const split = [0.4, 0.35, 0.2]; // 95% dispersed
+  for (let i = 0; i < outs.length; i++) {
+    events.push({
+      id: `pass-out-${i}`,
+      sourceId: mule,
+      targetId: outs[i]!,
+      time: inTime + (1 + i) * DAY_MS + Math.floor(rand() * DAY_MS),
+      label: usd(inflow * split[i]!),
+      data: { category: PATTERN_CATEGORY.passthrough, pattern: 'passthrough' },
+    });
+  }
+}
+
 export function makeAmlScenario(seed = 1): TimelineData<DemoDatum> {
   const rand = mulberry32(seed);
   const { elements, pools } = makeEntities();
   const events: TimelineEvent<DemoDatum>[] = [];
   addStructuring(elements, events, pools, rand);
   addCircular(elements, events, pools, rand);
+  addPassthrough(elements, events, pools, rand);
   return { elements, events };
 }
