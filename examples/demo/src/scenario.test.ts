@@ -18,3 +18,28 @@ describe('makeAmlScenario — entities', () => {
     expect(ids.size).toBe(elements.length);
   });
 });
+
+/** Parse a `usd()` label back to a number for amount assertions. */
+function amountOf(label: string | undefined): number {
+  return Number((label ?? '').replace(/[$,]/g, ''));
+}
+
+describe('makeAmlScenario — structuring', () => {
+  it('fans many sub-threshold payments into one target', () => {
+    const { events } = makeAmlScenario();
+    const struct = events.filter((e) => e.id.startsWith('struct-'));
+    expect(struct).toHaveLength(10);
+
+    // All into one target, from distinct sources.
+    const targets = new Set(struct.map((e) => e.targetId));
+    expect(targets.size).toBe(1);
+    const sources = new Set(struct.map((e) => e.sourceId));
+    expect(sources.size).toBe(10);
+
+    // Every payment is under the $10,000 reporting threshold, and tagged.
+    for (const e of struct) {
+      expect(amountOf(e.label)).toBeLessThan(10_000);
+      expect(e.data?.pattern).toBe('structuring');
+    }
+  });
+});

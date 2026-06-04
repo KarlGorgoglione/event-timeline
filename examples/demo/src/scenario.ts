@@ -3,13 +3,42 @@ import type {
   TimelineElement,
   TimelineEvent,
 } from '@timeline/react';
-import type { DemoDatum } from './synthetic';
+import type { AmlPattern, DemoDatum } from './synthetic';
 
 // A deterministic client/counterparty transaction-monitoring dataset (~100
 // entities, ~500 payments) with four labelled AML patterns embedded in it
 // (DESIGN.md §11/§12 customisation surfaces; spec
 // docs/superpowers/specs/2026-06-05-aml-scenario-design.md). A seeded PRNG keeps
 // it reproducible across the demo and the unit tests.
+
+const DAY_MS = 86_400_000;
+const START = Date.UTC(2026, 0, 1);
+/** The structuring threshold the smurfing pattern deliberately stays under. */
+const THRESHOLD = 10_000;
+
+/** Colour bucket per pattern; 0 = background. Drives the demo's paletteColor (§11). */
+const PATTERN_CATEGORY: Record<AmlPattern, number> = {
+  structuring: 1,
+  circular: 2,
+  passthrough: 3,
+  fanout: 4,
+};
+
+/** Mulberry32 — a tiny deterministic 32-bit PRNG (mirrors synthetic.ts). */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** USD label with thousands separators (locale-independent → test-stable). */
+function usd(n: number): string {
+  return '$' + Math.round(n).toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
 
 const EXTERNAL_NAMES = [
   'Globex', 'Initech', 'Umbrella', 'Soylent', 'Hooli',
@@ -74,11 +103,53 @@ function makeEntities(): {
   return { elements, pools: { clients, external, cash } };
 }
 
-export function makeAmlScenario(_seed = 1): TimelineData<DemoDatum> {
-  // `_seed` is unused until Task 2 wires in the seeded PRNG (underscore prefix
-  // satisfies the repo's no-unused-vars rule). `pools` is intentionally not
-  // destructured yet — the pattern layers in later tasks consume it.
-  const { elements } = makeEntities();
+/** Flag an actor element: vivid label + pattern colour bucket + tag. */
+function flagActor(
+  elements: TimelineElement<DemoDatum>[],
+  id: string,
+  label: string,
+  pattern: AmlPattern,
+): void {
+  const el = elements.find((e) => e.id === id);
+  if (el === undefined) return;
+  el.label = label;
+  el.data = {
+    category: PATTERN_CATEGORY[pattern],
+    kind: el.data?.kind,
+    pattern,
+  };
+}
+
+/**
+ * Structuring / smurfing: one client receives ~10 sub-threshold payments from
+ * many distinct counterparties inside a 5-day window (a fan-in burst).
+ */
+function addStructuring(
+  elements: TimelineElement<DemoDatum>[],
+  events: TimelineEvent<DemoDatum>[],
+  pools: Pools,
+  rand: () => number,
+): void {
+  const target = pools.clients[0]!;
+  flagActor(elements, target, '⚠ Smurf-Target', 'structuring');
+  const windowStart = START + 100 * DAY_MS;
+  for (let i = 0; i < 10; i++) {
+    const amount = THRESHOLD - 1000 + Math.floor(rand() * 900); // 9000–9899
+    events.push({
+      id: `struct-${i}`,
+      sourceId: pools.external[i]!, // ext-0 … ext-9, distinct
+      targetId: target,
+      time: windowStart + Math.floor(rand() * 5 * DAY_MS),
+      label: usd(amount),
+      data: { category: PATTERN_CATEGORY.structuring, pattern: 'structuring' },
+    });
+  }
+}
+
+export function makeAmlScenario(seed = 1): TimelineData<DemoDatum> {
+  const rand = mulberry32(seed);
+  const { elements, pools } = makeEntities();
   const events: TimelineEvent<DemoDatum>[] = [];
+  addStructuring(elements, events, pools, rand);
   return { elements, events };
 }
