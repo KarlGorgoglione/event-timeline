@@ -11,4 +11,8 @@ export type {
   TimelineEvent,
   HitResult,
   Time,
+  LayoutStrategy,
 } from '@timeline/core';
+
+// Built-in layout strategies (DESIGN.md §7), so hosts can name one in `options`.
+export { byFirstEvent, barycenter, explicit } from '@timeline/core';

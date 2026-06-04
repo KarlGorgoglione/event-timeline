@@ -11,6 +11,7 @@ import {
   TimelineEngine,
   type ClusteringOptions,
   type HitResult,
+  type LayoutStrategy,
   type LodOptions,
   type OnDiagnostic,
   type Theme,
@@ -20,6 +21,10 @@ import {
 
 export interface TimelineOptions {
   onDiagnostic?: OnDiagnostic;
+  /** Vertical row-ordering strategy (DESIGN.md §7). Default `byFirstEvent`. */
+  layout?: LayoutStrategy;
+  /** Trailing-edge delay (ms) for coalesced incremental re-layout (DESIGN.md §7). */
+  layoutDebounceMs?: number;
   /** Allow `ctrl`/`⌘`+click to extend the selection (DESIGN.md §9). */
   multiSelect?: boolean;
   /** Event collapsing/aggregation config (DESIGN.md §6). */
@@ -68,6 +73,8 @@ export function useTimeline<TData>(
     const engine = new TimelineEngine<TData>(base, overlay, {
       theme,
       onDiagnostic: options?.onDiagnostic,
+      layout: options?.layout,
+      layoutDebounceMs: options?.layoutDebounceMs,
       multiSelect: options?.multiSelect,
       clustering: options?.clustering,
       lod: options?.lod,

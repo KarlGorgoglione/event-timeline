@@ -14,7 +14,7 @@ a numbered phased delivery plan (§15). Read the relevant section before
 implementing — code comments reference these sections by number (e.g. "§5",
 "DESIGN.md §12"). Keep that habit when adding code.
 
-**Current state: Phase 4 complete (scale & LOD).** Phase 3 (interactions) layered
+**Current state: Phase 5 complete (layout engine).** Phase 3 (interactions) layered
 on the Phase 2 renderer: direction-aware orthogonal arrows (riser + source node
 dot + target arrowhead), self-event loop glyphs, event labels, and element
 label+icon at each line start with a sticky-left fallback, all culled by the §5
@@ -46,9 +46,22 @@ a "×N" count marker (themeable `clusterColor`); clusters are hit-testable and
 zoom in (no persisted state). Per-event labels are suppressed below an LOD zoom
 threshold. `clustering`/`lod` are configurable through `TimelineEngineOptions` and
 the React `TimelineOptions`; the demo adds a 50k toggle and cluster status.
-The temporal index's bucket consumers (barycenter layout §7) and incremental
-updates land in Phase 5+. When building a feature, find its phase in §15 and its
-design section first.
+
+Phase 5 (§7) completes the pluggable **layout** trio behind the existing
+`LayoutStrategy.order(elements, events): string[]` seam (pure, no pixels/camera —
+the §3 coordinate-truth invariant). Alongside the default `byFirstEvent`,
+`layout/barycenter.ts` adds crossing-reduction via iterative barycenter sweeps
+(Jacobi-style global re-sort, seeded from `byFirstEvent` for DRY) that returns
+the lowest edge-span order seen and stops on period-1/2 oscillation, and
+`layout/explicit.ts` honours the `element.order` pin (unpinned rows fall back to
+`byFirstEvent`); a `layout/index.ts` barrel exports all three. A reusable
+trailing-edge `engine/debounce.ts` (`cancel`/`flush`, SSR-safe) is wired into the
+engine as the `scheduleLayoutRecompute()` seam (cancelled on dispose, behind
+`layoutDebounceMs`) that Phase 7's incremental mutations will call — `setData`
+stays synchronous. `layout` + the strategies are exposed through
+`TimelineEngineOptions`, the React `TimelineOptions`, and a demo layout toggle.
+The temporal index's bucket consumers and incremental updates land in Phase 6+.
+When building a feature, find its phase in §15 and its design section first.
 
 ## Commands
 

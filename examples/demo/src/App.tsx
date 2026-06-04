@@ -1,7 +1,23 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Timeline, type HitResult, type TimelineHandle } from '@timeline/react';
+import {
+  Timeline,
+  barycenter,
+  byFirstEvent,
+  explicit,
+  type HitResult,
+  type LayoutStrategy,
+  type TimelineHandle,
+} from '@timeline/react';
 import { demoData } from './fixture';
 import { makeSynthetic } from './synthetic';
+
+const LAYOUT_NAMES = ['byFirstEvent', 'barycenter', 'explicit'] as const;
+type LayoutName = (typeof LAYOUT_NAMES)[number];
+const LAYOUTS: Record<LayoutName, LayoutStrategy> = {
+  byFirstEvent,
+  barycenter,
+  explicit,
+};
 
 /** Short human label for the status bar (mirrors the default tooltip content). */
 function describeHit(hit: HitResult | null): string {
@@ -28,6 +44,7 @@ export function App() {
   const ref = useRef<TimelineHandle>(null);
   const [big, setBig] = useState(false);
   const [huge, setHuge] = useState(false);
+  const [layoutName, setLayoutName] = useState<LayoutName>('byFirstEvent');
   const [hover, setHover] = useState<HitResult | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [viewport, setViewport] = useState({ pxPerMs: 0, scrollY: 0 });
@@ -43,7 +60,12 @@ export function App() {
       setViewport({ pxPerMs: v.pxPerMs, scrollY: v.scrollY }),
     [],
   );
-  const options = useMemo(() => ({ multiSelect: true }), []);
+  // A new `options` reference (on layout change) re-creates the engine and
+  // re-runs layout (§12 referential-stability contract).
+  const options = useMemo(
+    () => ({ multiSelect: true, layout: LAYOUTS[layoutName] }),
+    [layoutName],
+  );
 
   // Memoized so the referential-stability contract holds (§12): a stable `data`
   // reference avoids a full setData on every render. The 10k set is built once;
@@ -97,6 +119,20 @@ export function App() {
           style={{ font: '12px system-ui' }}
         >
           {huge ? 'Sample' : '50k'}
+        </button>
+        <button
+          type="button"
+          data-testid="toggle-layout"
+          onClick={() =>
+            setLayoutName((name) => {
+              const next =
+                (LAYOUT_NAMES.indexOf(name) + 1) % LAYOUT_NAMES.length;
+              return LAYOUT_NAMES[next]!;
+            })
+          }
+          style={{ font: '12px system-ui' }}
+        >
+          layout: {layoutName}
         </button>
       </header>
       <div style={{ flex: 1, minHeight: 0 }}>

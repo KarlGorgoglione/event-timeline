@@ -51,6 +51,7 @@ import { hitTest } from '../interaction/hitTest';
 import type { HitResult } from '../interaction/hit';
 import { nextSelection, sameSet } from '../interaction/selection';
 import type { HitTarget } from '../render/specs';
+import { debounce, type Debounced } from './debounce';
 import { TypedEmitter, type TimelineEventMap } from './emitter';
 import { FrameScheduler, type DirtyFlags } from './scheduler';
 import { resolveTheme } from './theme';
@@ -75,6 +76,12 @@ export interface TimelineEngineOptions {
   theme?: Partial<Theme>;
   onDiagnostic?: OnDiagnostic;
   layout?: LayoutStrategy;
+  /**
+   * Trailing-edge delay (ms) for coalescing incremental re-layouts (DESIGN.md
+   * §7, §10). Applies only to the incremental seam ({@link scheduleLayoutRecompute});
+   * a full `setData` always recomputes synchronously. Default 120.
+   */
+  layoutDebounceMs?: number;
   /** Allow `ctrl`/`⌘`+click to extend the selection (DESIGN.md §9). */
   multiSelect?: boolean;
   clustering?: ClusteringOptions;
@@ -88,6 +95,8 @@ const MS_PER_DAY = 86_400_000;
 const DEFAULT_CLUSTER_MIN_SEPARATION_PX = 12;
 /** Default label-LOD threshold: show event labels at ≥40 CSS px per day (§6). */
 const DEFAULT_EVENT_LABEL_MIN_PX_PER_DAY = 40;
+/** Default trailing-edge delay (ms) for coalesced incremental re-layout (§7). */
+const DEFAULT_LAYOUT_DEBOUNCE_MS = 120;
 
 export class TimelineEngine<TData = unknown> {
   private readonly theme: Theme;
@@ -100,6 +109,12 @@ export class TimelineEngine<TData = unknown> {
   private readonly pointer: PointerController;
   private readonly multiSelect: boolean;
   private readonly layoutStrategy: LayoutStrategy;
+  /**
+   * Coalesced incremental re-layout (DESIGN.md §7). Streaming mutations
+   * (`addEvents`/`removeEvents`, §10) call {@link scheduleLayoutRecompute} so a
+   * burst re-runs layout once; `setData` bypasses this and recomputes inline.
+   */
+  private readonly debouncedRecomputeLayout: Debounced<[]>;
   /** Resolved per-frame LOD/clustering config (DESIGN.md §6). */
   private readonly lod: LodConfig;
   private readonly clustering: ClusteringConfig;
@@ -156,6 +171,12 @@ export class TimelineEngine<TData = unknown> {
       rowGap: this.theme.rowGap,
     };
     this.layoutStrategy = options.layout ?? byFirstEvent;
+    this.debouncedRecomputeLayout = debounce(() => {
+      if (this.disposed) return;
+      this.recomputeLayout();
+      this.scheduler.markDirty('base');
+      this.emitViewportChange();
+    }, options.layoutDebounceMs ?? DEFAULT_LAYOUT_DEBOUNCE_MS);
     this.multiSelect = options.multiSelect ?? false;
     this.clustering = {
       enabled: options.clustering?.enabled ?? true,
@@ -286,6 +307,7 @@ export class TimelineEngine<TData = unknown> {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.debouncedRecomputeLayout.cancel();
     this.scheduler.dispose();
     this.pointer.dispose();
     this.emitter.clear();
@@ -312,6 +334,16 @@ export class TimelineEngine<TData = unknown> {
     );
     this.rowLayout = computeRowLayout(orderedIds, this.metrics);
     this.camera.clampScrollY(this.rowLayout.contentHeight, this.viewport);
+  }
+
+  /**
+   * Request a coalesced re-layout after an *incremental* mutation (DESIGN.md §7,
+   * §10): a burst of streaming `addEvents`/`removeEvents` re-runs layout once on
+   * the trailing edge rather than per call. Full `setData` does not use this —
+   * it recomputes synchronously so `fit`/scroll-clamp see `contentHeight` now.
+   */
+  private scheduleLayoutRecompute(): void {
+    this.debouncedRecomputeLayout();
   }
 
   /**

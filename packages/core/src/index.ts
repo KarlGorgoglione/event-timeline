@@ -32,7 +32,7 @@ export type {
 } from './engine/timeline';
 export type { TimelineEventMap } from './engine/emitter';
 
-export { byFirstEvent } from './layout/byFirstEvent';
+export { byFirstEvent, barycenter, explicit } from './layout';
 export type { LayoutStrategy } from './layout/types';
 
 export {
