@@ -97,3 +97,35 @@ describe('makeAmlScenario — fan-out', () => {
     for (const e of fan) expect(e.data?.pattern).toBe('fanout');
   });
 });
+
+describe('makeAmlScenario — dataset', () => {
+  it('produces ~500 events and all four patterns', () => {
+    const { events } = makeAmlScenario();
+    expect(events).toHaveLength(500);
+
+    const patterns = new Set(
+      events.flatMap((e) => (e.data?.pattern ? [e.data.pattern] : [])),
+    );
+    expect(patterns).toEqual(
+      new Set(['structuring', 'circular', 'passthrough', 'fanout']),
+    );
+  });
+
+  it('references only real element ids', () => {
+    const { elements, events } = makeAmlScenario();
+    const ids = new Set(elements.map((e) => e.id));
+    for (const e of events) {
+      expect(ids.has(e.sourceId)).toBe(true);
+      expect(ids.has(e.targetId)).toBe(true);
+    }
+  });
+
+  it('gives every event a unique id', () => {
+    const { events } = makeAmlScenario();
+    expect(new Set(events.map((e) => e.id)).size).toBe(events.length);
+  });
+
+  it('is deterministic for a given seed', () => {
+    expect(makeAmlScenario(7)).toEqual(makeAmlScenario(7));
+  });
+});

@@ -12,6 +12,7 @@ import type { AmlPattern, DemoDatum } from './synthetic';
 // it reproducible across the demo and the unit tests.
 
 const DAY_MS = 86_400_000;
+const YEAR_MS = 365 * DAY_MS;
 const START = Date.UTC(2026, 0, 1);
 /** The structuring threshold the smurfing pattern deliberately stays under. */
 const THRESHOLD = 10_000;
@@ -240,6 +241,36 @@ function addFanout(
   }
 }
 
+/**
+ * Background activity: clients initiate payments to arbitrary counterparties at
+ * varied intervals across the year, so the patterns sit inside realistic noise.
+ * Untagged (category 0) so the pattern flows stand out under the colour resolver.
+ */
+function addBackground(
+  events: TimelineEvent<DemoDatum>[],
+  pools: Pools,
+  rand: () => number,
+  count: number,
+): void {
+  const all = [...pools.clients, ...pools.external, ...pools.cash];
+  for (let i = 0; i < count; i++) {
+    const source = pools.clients[Math.floor(rand() * pools.clients.length)]!;
+    let target = all[Math.floor(rand() * all.length)]!;
+    if (target === source) {
+      target = all[(all.indexOf(source) + 1) % all.length]!;
+    }
+    const amount = 100 + Math.floor(rand() * 50_000);
+    events.push({
+      id: `bg-${i}`,
+      sourceId: source,
+      targetId: target,
+      time: START + Math.floor(rand() * YEAR_MS),
+      label: usd(amount),
+      data: { category: 0 },
+    });
+  }
+}
+
 export function makeAmlScenario(seed = 1): TimelineData<DemoDatum> {
   const rand = mulberry32(seed);
   const { elements, pools } = makeEntities();
@@ -248,5 +279,7 @@ export function makeAmlScenario(seed = 1): TimelineData<DemoDatum> {
   addCircular(elements, events, pools, rand);
   addPassthrough(elements, events, pools, rand);
   addFanout(elements, events, pools, rand);
+  // 28 pattern events + 472 background = 500 total.
+  addBackground(events, pools, rand, 472);
   return { elements, events };
 }
