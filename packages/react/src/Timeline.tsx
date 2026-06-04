@@ -2,18 +2,22 @@ import {
   forwardRef,
   useImperativeHandle,
   useRef,
+  useState,
   type CSSProperties,
   type ForwardedRef,
+  type PointerEvent as ReactPointerEvent,
   type Ref,
 } from 'react';
 import {
   VERSION,
+  type HitResult,
   type Theme,
   type Time,
   type TimelineData,
   type TimelineEventMap,
 } from '@timeline/core';
 import { useTimeline, type TimelineOptions } from './useTimeline';
+import { Tooltip } from './Tooltip';
 
 /**
  * Props for the {@link Timeline} component (Phase 1 subset, DESIGN.md §12).
@@ -31,13 +35,18 @@ export interface TimelineProps<TData = unknown> {
   onReady?: () => void;
   onViewportChange?: (v: TimelineEventMap<TData>['viewportChange']) => void;
   onDataChange?: (d: TimelineEventMap<TData>['dataChange']) => void;
+  onHover?: (hit: HitResult<TData> | null) => void;
+  onClick?: (e: TimelineEventMap<TData>['click']) => void;
+  onSelectionChange?: (ids: string[]) => void;
 }
 
-/** Imperative handle returned via `ref` (Phase 1 subset, DESIGN.md §12). */
+/** Imperative handle returned via `ref` (DESIGN.md §12). */
 export interface TimelineHandle<TData = unknown> {
   readonly version: string;
   fit(): void;
   panToTime(t: Time): void;
+  zoomToRange(start: Time, end: Time): void;
+  select(ids: string[]): void;
   getViewport(): TimelineEventMap<TData>['viewportChange'];
   resize(cssW: number, cssH: number, dpr: number): void;
   setData(data: TimelineData<TData>): void;
@@ -74,6 +83,12 @@ function TimelineInner<TData>(
   const baseRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
 
+  // Hover hit (from the engine) and the pointer position (from the DOM) drive
+  // the HTML tooltip. Tracking position in React keeps canvas hit-testing in
+  // the engine while text rendering stays crisp HTML (§9).
+  const [hover, setHover] = useState<HitResult<TData> | null>(null);
+  const [pointer, setPointer] = useState({ x: 0, y: 0 });
+
   const engineRef = useTimeline<TData>({
     baseRef,
     overlayRef,
@@ -84,6 +99,12 @@ function TimelineInner<TData>(
     onReady: props.onReady,
     onViewportChange: props.onViewportChange,
     onDataChange: props.onDataChange,
+    onHover: (hit) => {
+      setHover(hit);
+      props.onHover?.(hit);
+    },
+    onClick: props.onClick,
+    onSelectionChange: props.onSelectionChange,
   });
 
   useImperativeHandle(
@@ -92,6 +113,8 @@ function TimelineInner<TData>(
       version: VERSION,
       fit: () => engineRef.current?.fit(),
       panToTime: (t) => engineRef.current?.panToTime(t),
+      zoomToRange: (s, e) => engineRef.current?.zoomToRange(s, e),
+      select: (ids) => engineRef.current?.select(ids),
       getViewport: () => engineRef.current?.getViewport() ?? EMPTY_VIEWPORT,
       resize: (w, h, dpr) => engineRef.current?.resize(w, h, dpr),
       setData: (d) => engineRef.current?.setData(d),
@@ -99,15 +122,20 @@ function TimelineInner<TData>(
     [engineRef],
   );
 
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) =>
+    setPointer({ x: e.clientX, y: e.clientY });
+
   return (
     <div
       ref={containerRef}
       className={className}
       style={{ ...containerStyle, ...style }}
       data-testid="timeline-root"
+      onPointerMove={onPointerMove}
     >
       <canvas ref={baseRef} style={canvasStyle} />
       <canvas ref={overlayRef} style={canvasStyle} />
+      <Tooltip hit={hover} x={pointer.x} y={pointer.y} />
     </div>
   );
 }

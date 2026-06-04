@@ -102,6 +102,23 @@ export class Camera {
   }
 
   /**
+   * Zoom about the cursor (DESIGN.md §3): scale `pxPerMs` by `factor`, keeping
+   * the time under `cursorScreenX` fixed on screen. The cursor time is captured
+   * *before* the zoom change, then `originTime` is recomputed afterwards so the
+   * same instant lands under the same screen x. Reuses the existing transforms
+   * and clamping — no new `pxPerMs` arithmetic leaks out of the Camera.
+   */
+  zoomAboutCursor(
+    factor: number,
+    cursorScreenX: number,
+    bounds: ZoomBounds,
+  ): void {
+    const tCursor = this.screenXToTime(cursorScreenX);
+    this.setPxPerMs(this._state.pxPerMs * factor, bounds);
+    this._state.originTime = tCursor - cursorScreenX / this._state.pxPerMs;
+  }
+
+  /**
    * Pan by a pixel delta. Dragging right (`dxCss > 0`) reveals earlier time at
    * the left edge, so `originTime` decreases. This is the only place a pixel
    * delta is converted to a time delta (`dxCss / pxPerMs`).

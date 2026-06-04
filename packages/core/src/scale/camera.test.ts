@@ -46,6 +46,35 @@ describe('Camera pan', () => {
   });
 });
 
+describe('Camera zoom-about-cursor (§3)', () => {
+  const bounds = { minPxPerMs: 0.001, maxPxPerMs: 1000 };
+
+  it('keeps the time under the cursor fixed across zoom', () => {
+    const camera = new Camera(metrics, { originTime: 1000, pxPerMs: 2 });
+    const cursorX = 300;
+    const tCursor = camera.screenXToTime(cursorX);
+    camera.zoomAboutCursor(2, cursorX, bounds);
+    expect(camera.state.pxPerMs).toBe(4);
+    // The same instant still maps to the same screen x.
+    expect(camera.timeToScreenX(tCursor)).toBeCloseTo(cursorX);
+  });
+
+  it('keeps the cursor time fixed when zooming out', () => {
+    const camera = new Camera(metrics, { originTime: -500, pxPerMs: 8 });
+    const cursorX = 420;
+    const tCursor = camera.screenXToTime(cursorX);
+    camera.zoomAboutCursor(0.5, cursorX, bounds);
+    expect(camera.state.pxPerMs).toBe(4);
+    expect(camera.timeToScreenX(tCursor)).toBeCloseTo(cursorX);
+  });
+
+  it('clamps the zoomed pxPerMs to the bounds', () => {
+    const camera = new Camera(metrics, { originTime: 0, pxPerMs: 5 });
+    camera.zoomAboutCursor(1000, 100, { minPxPerMs: 0.1, maxPxPerMs: 10 });
+    expect(camera.state.pxPerMs).toBe(10);
+  });
+});
+
 describe('Camera clamping', () => {
   it('clamps pxPerMs to the zoom bounds', () => {
     const camera = new Camera(metrics);

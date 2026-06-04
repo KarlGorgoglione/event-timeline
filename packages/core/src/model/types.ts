@@ -84,6 +84,10 @@ export interface Theme {
   rowHeight: number;
   rowGap: number;
   labelPadding: number;
+  /** Overlay colour for the hovered primitive (DESIGN.md §9). */
+  hoverColor: string;
+  /** Overlay colour for selected primitives' outlines (DESIGN.md §9). */
+  selectionColor: string;
   /** Theme-level element defaults (base of the resolution chain). */
   element: ElementStyle;
   /** Theme-level event defaults (base of the resolution chain). */

@@ -14,6 +14,8 @@ export const defaultTheme: Theme = {
   rowHeight: 28,
   rowGap: 6,
   labelPadding: 8,
+  hoverColor: '#ffd166',
+  selectionColor: '#4fc3f7',
   element: {
     lineColor: '#5aa0ff',
     lineWidth: 2,

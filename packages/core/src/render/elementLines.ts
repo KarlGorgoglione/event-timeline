@@ -10,27 +10,38 @@
 // Pure: works in CSS pixels and returns specs; the engine snaps to device px.
 
 import { labelBatch, lineBatch } from './batch';
-import type { BuildContext, IconSpec, LabelSpec, LineSpec } from './specs';
+import type {
+  BuildContext,
+  HitTarget,
+  IconSpec,
+  LabelSpec,
+  LineSpec,
+} from './specs';
 
 /** A few CSS px of line drawn before an element's first event (§1). */
 export const LINE_LEAD_PAD_PX = 6;
 /** Gap between the element icon and its label text. */
 const ICON_GAP_PX = 4;
 
-export interface ElementLinesResult {
+export interface ElementLinesResult<TData = unknown> {
   lines: LineSpec[];
   /** Element labels and emoji icons (both anchored left/middle). */
   labels: LabelSpec[];
   icons: IconSpec;
+  /** Identity-carrying line geometry for hit-testing (§5). */
+  targets: HitTarget<TData>[];
 }
 
-export function buildElementLines(ctx: BuildContext): ElementLinesResult {
+export function buildElementLines<TData>(
+  ctx: BuildContext<TData>,
+): ElementLinesResult<TData> {
   const { camera, rowLayout, data, viewport, theme, band, resolveIcon } = ctx;
   const rowHeight = theme.rowHeight;
 
   const lines = new Map<string, LineSpec>();
   const labels = new Map<string, LabelSpec>();
   const icons: IconSpec = { items: [] };
+  const targets: HitTarget<TData>[] = [];
 
   for (const id of rowLayout.orderedIds) {
     const extent = data.getExtent(id);
@@ -56,12 +67,23 @@ export function buildElementLines(ctx: BuildContext): ElementLinesResult {
 
     const lineColor = element?.style?.lineColor ?? theme.element.lineColor;
     const lineWidth = element?.style?.lineWidth ?? theme.element.lineWidth;
+    const x1 = lineStartX - LINE_LEAD_PAD_PX;
     lineBatch(lines, lineColor, lineWidth).segments.push({
-      x1: lineStartX - LINE_LEAD_PAD_PX,
+      x1,
       y1: rowCenterY,
       x2: lineEndX,
       y2: rowCenterY,
     });
+    if (element !== undefined) {
+      targets.push({
+        kind: 'element',
+        element,
+        y: rowCenterY,
+        x1,
+        x2: lineEndX,
+        width: lineWidth,
+      });
+    }
 
     // Label + icon anchor. Sticky-left: when the start scrolled past the edge
     // but the line is still visible, pin to labelPadding (§1).
@@ -108,5 +130,6 @@ export function buildElementLines(ctx: BuildContext): ElementLinesResult {
     lines: [...lines.values()],
     labels: [...labels.values()],
     icons,
+    targets,
   };
 }

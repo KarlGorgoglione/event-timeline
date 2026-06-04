@@ -61,6 +61,35 @@ export interface RowBand {
 }
 
 /**
+ * Identity-carrying geometry for one visible primitive, in CSS pixels (§5).
+ * Emitted by the builders alongside the style-batched draw specs from the *same*
+ * computed coordinates (DRY), so the hit-test grid and the overlay highlight
+ * both reuse it without recomputing positions. Each target holds the source
+ * element/event reference directly, so a hit needs no store lookup to build its
+ * `HitResult`.
+ */
+export type HitTarget<TData = unknown> =
+  | {
+      kind: 'element';
+      element: TimelineElement<TData>;
+      /** Horizontal line: y, and the visible x-extent. */
+      y: number;
+      x1: number;
+      x2: number;
+      width: number;
+    }
+  | {
+      kind: 'event';
+      event: TimelineEvent<TData>;
+      /** Riser / self-loop segments. */
+      segments: SpecSegment[];
+      arrowhead?: { x: number; y: number };
+      node?: { x: number; y: number };
+      width: number;
+      arrowheadSize: number;
+    };
+
+/**
  * The read-only dataset access a builder needs (ISP): a narrow view of
  * `DataStore` so builders stay decoupled from the store implementation and are
  * trivial to fake in tests.

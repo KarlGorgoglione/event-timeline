@@ -38,7 +38,12 @@ import {
   type Viewport,
 } from '../scale/camera';
 import { generateTicks } from '../scale/ticks';
-import { PanController } from '../interaction/pan';
+import { PointerController, type PointerHost } from '../interaction/pointer';
+import { buildHitGrid, type HitGrid } from '../interaction/hitGrid';
+import { hitTest } from '../interaction/hitTest';
+import type { HitResult } from '../interaction/hit';
+import { nextSelection, sameSet } from '../interaction/selection';
+import type { HitTarget } from '../render/specs';
 import { TypedEmitter, type TimelineEventMap } from './emitter';
 import { FrameScheduler, type DirtyFlags } from './scheduler';
 import { resolveTheme } from './theme';
@@ -47,6 +52,8 @@ export interface TimelineEngineOptions {
   theme?: Partial<Theme>;
   onDiagnostic?: OnDiagnostic;
   layout?: LayoutStrategy;
+  /** Allow `ctrl`/`⌘`+click to extend the selection (DESIGN.md §9). */
+  multiSelect?: boolean;
 }
 
 /** Minimum pixel spacing header labels need (§8). */
@@ -60,7 +67,8 @@ export class TimelineEngine<TData = unknown> {
   private readonly renderer: Canvas2DRenderer;
   private readonly scheduler: FrameScheduler;
   private readonly emitter = new TypedEmitter<TimelineEventMap<TData>>();
-  private readonly pan: PanController;
+  private readonly pointer: PointerController;
+  private readonly multiSelect: boolean;
   private readonly layoutStrategy: LayoutStrategy;
   private readonly iconCache = new IconCache(() =>
     this.scheduler.markDirty('base'),
@@ -94,6 +102,15 @@ export class TimelineEngine<TData = unknown> {
   private hasFitted = false;
   private disposed = false;
 
+  // --- Interaction state (Phase 3, §9) ---
+  /** Hit grid + targets rebuilt each base draw; reused during pure hover (§5). */
+  private hitGrid: HitGrid<TData> | null = null;
+  private frameTargets: HitTarget<TData>[] = [];
+  /** Latest cursor position pending a (frame-coalesced) hit-test, or null. */
+  private pendingPointer: { x: number; y: number } | null = null;
+  private hovered: HitResult<TData> | null = null;
+  private readonly selectedIds = new Set<string>();
+
   constructor(
     baseCanvas: HTMLCanvasElement,
     overlayCanvas: HTMLCanvasElement,
@@ -106,6 +123,7 @@ export class TimelineEngine<TData = unknown> {
       rowGap: this.theme.rowGap,
     };
     this.layoutStrategy = options.layout ?? byFirstEvent;
+    this.multiSelect = options.multiSelect ?? false;
     this.store = new DataStore<TData>({ onDiagnostic: options.onDiagnostic });
     this.camera = new Camera(this.metrics);
     this.renderer = new Canvas2DRenderer(
@@ -115,11 +133,9 @@ export class TimelineEngine<TData = unknown> {
     );
     this.scheduler = new FrameScheduler((dirty) => this.drawFrame(dirty));
     // The overlay is the topmost layer, so it receives pointer events; the
-    // interaction controllers attach there (base draws beneath it).
-    this.pan = new PanController(overlayCanvas, {
-      camera: this.camera,
-      onPan: () => this.onPan(),
-    });
+    // pointer controller attaches there (base draws beneath it). The controller
+    // is a pure input translator — all camera/hit-test math lives in this host.
+    this.pointer = new PointerController(overlayCanvas, this.pointerHost());
 
     queueMicrotask(() => {
       if (!this.disposed) this.emitter.emit('ready', undefined);
@@ -159,6 +175,31 @@ export class TimelineEngine<TData = unknown> {
     this.camera.setOriginTime(t);
     this.scheduler.markDirty('base');
     this.emitViewportChange();
+  }
+
+  /** Frame a time range across the viewport width (DESIGN.md §12). */
+  zoomToRange(start: Time, end: Time): void {
+    const span = end - start;
+    if (!(span > 0) || this.viewport.cssWidth <= 0) return;
+    this.camera.setOriginTime(start);
+    this.camera.setPxPerMs(this.viewport.cssWidth / span, this.zoomBounds());
+    this.scheduler.markDirty('base');
+    this.emitViewportChange();
+  }
+
+  /**
+   * Replace the selection imperatively (DESIGN.md §9, §12). Ids are the
+   * `kind:id` composites produced by hit-testing (see {@link hitId}), so an
+   * element and an event sharing a raw id stay distinct. A no-op replacement
+   * emits nothing and skips the overlay redraw.
+   */
+  select(ids: string[]): void {
+    const next = new Set(ids);
+    if (sameSet(this.selectedIds, next)) return;
+    this.selectedIds.clear();
+    for (const id of next) this.selectedIds.add(id);
+    this.emitter.emit('selectionChange', { ids: [...this.selectedIds] });
+    this.scheduler.markDirty('overlay');
   }
 
   getViewport(): TimelineEventMap<TData>['viewportChange'] {
@@ -201,7 +242,7 @@ export class TimelineEngine<TData = unknown> {
     if (this.disposed) return;
     this.disposed = true;
     this.scheduler.dispose();
-    this.pan.dispose();
+    this.pointer.dispose();
     this.emitter.clear();
   }
 
@@ -244,9 +285,72 @@ export class TimelineEngine<TData = unknown> {
     this.emitViewportChange();
   }
 
-  private onPan(): void {
+  /** Mark the base layer dirty and emit the new viewport (any camera change). */
+  private onCameraChange(): void {
     this.scheduler.markDirty('base');
     this.emitViewportChange();
+  }
+
+  /**
+   * The semantic-intent sink for the pointer controller (§9). The controller
+   * does no math; every camera mutation and hit-test is applied here so the
+   * Camera stays the single source of coordinate truth (§3).
+   */
+  private pointerHost(): PointerHost {
+    return {
+      panBy: (dx, dy) => {
+        this.camera.panByPixels(dx, dy);
+        this.camera.clampScrollY(this.rowLayout.contentHeight, this.viewport);
+        this.onCameraChange();
+      },
+      zoomBy: (factor, cursorX) => {
+        this.camera.zoomAboutCursor(factor, cursorX, this.zoomBounds());
+        this.onCameraChange();
+      },
+      scrollBy: (dy) => {
+        this.camera.panByPixels(0, -dy);
+        this.camera.clampScrollY(this.rowLayout.contentHeight, this.viewport);
+        this.onCameraChange();
+      },
+      hoverAt: (x, y) => {
+        // Coalesced to one hit-test per frame: store the latest position and
+        // let the overlay draw resolve it (§9).
+        this.pendingPointer = { x, y };
+        this.scheduler.markDirty('overlay');
+      },
+      clickAt: (x, y, mods) => this.onClick(x, y, mods),
+      leave: () => {
+        this.pendingPointer = null;
+        if (this.hovered !== null) {
+          this.hovered = null;
+          this.emitter.emit('hover', null);
+          this.scheduler.markDirty('overlay');
+        }
+      },
+    };
+  }
+
+  /** Resolve a click against the current hit grid: emit click + update selection. */
+  private onClick(
+    x: number,
+    y: number,
+    mods: { ctrlOrMeta: boolean; shift: boolean },
+  ): void {
+    const hit = this.hitGrid ? hitTest(this.hitGrid, x, y) : null;
+    if (hit !== null) this.emitter.emit('click', { hit, modifiers: mods });
+
+    const result = nextSelection(
+      this.selectedIds,
+      hit !== null ? hitId(hit) : null,
+      mods,
+      this.multiSelect,
+    );
+    if (result.changed) {
+      this.selectedIds.clear();
+      for (const id of result.ids) this.selectedIds.add(id);
+      this.emitter.emit('selectionChange', { ids: result.ids });
+      this.scheduler.markDirty('overlay');
+    }
   }
 
   private emitViewportChange(): void {
@@ -257,10 +361,13 @@ export class TimelineEngine<TData = unknown> {
   private drawFrame(dirty: DirtyFlags): void {
     if (this.disposed) return;
     if (dirty.base) this.drawBase();
-    if (dirty.overlay) {
-      this.renderer.beginFrame('overlay');
-      this.renderer.endFrame('overlay');
-    }
+    // The overlay highlights this frame's `frameTargets`, which `drawBase`
+    // rebuilds at the current camera position. So it must re-render whenever the
+    // base moved — not only on overlay-only (hover/selection) changes —
+    // otherwise a pan/zoom slides the content while a stale highlight stays
+    // pinned to its old screen position. (§4's independence is the *other*
+    // direction: an overlay-only change never forces a base redraw.)
+    if (dirty.base || dirty.overlay) this.drawOverlay();
   }
 
   private drawBase(): void {
@@ -314,6 +421,11 @@ export class TimelineEngine<TData = unknown> {
     };
     const elements = buildElementLines(ctx);
     const arrows = buildArrows(ctx);
+
+    // Rebuild the hit-test index from this frame's visible primitives (§5). It
+    // is reused unchanged for pure hover until the next base redraw.
+    this.frameTargets = [...elements.targets, ...arrows.targets];
+    this.hitGrid = buildHitGrid(this.frameTargets);
 
     for (const spec of elements.lines) {
       this.renderer.drawLines(snapLines(spec, dpr));
@@ -379,4 +491,128 @@ export class TimelineEngine<TData = unknown> {
 
     this.renderer.endFrame('base');
   }
+
+  /**
+   * Overlay pass (DESIGN.md §4, §9): resolve the pending hover against the hit
+   * grid (emitting `hover` only on change), then redraw the hovered and selected
+   * primitives in the highlight/selection colours. It reuses this frame's
+   * `frameTargets` geometry — no recompute — and never touches the base layer,
+   * so hover/selection stay independent of the expensive base redraw.
+   */
+  private drawOverlay(): void {
+    this.resolveHover();
+    this.renderer.beginFrame('overlay');
+
+    const dpr = this.dpr;
+    const hoveredKey = this.hovered !== null ? hitId(this.hovered) : null;
+
+    for (const target of this.frameTargets) {
+      const key = targetKey(target);
+      const selected = this.selectedIds.has(key);
+      const hovered = key === hoveredKey;
+      if (!selected && !hovered) continue;
+      // Hover wins the colour when an item is both hovered and selected.
+      const color = hovered ? this.theme.hoverColor : this.theme.selectionColor;
+      this.drawHighlight(target, color, dpr);
+    }
+
+    this.renderer.endFrame('overlay');
+  }
+
+  /** Run the coalesced hit-test for the latest cursor position and emit on change. */
+  private resolveHover(): void {
+    if (this.pendingPointer === null || this.hitGrid === null) return;
+    const hit = hitTest(
+      this.hitGrid,
+      this.pendingPointer.x,
+      this.pendingPointer.y,
+    );
+    const nextKey = hit !== null ? hitId(hit) : null;
+    const prevKey = this.hovered !== null ? hitId(this.hovered) : null;
+    if (nextKey !== prevKey) {
+      this.hovered = hit;
+      this.emitter.emit('hover', hit);
+    }
+  }
+
+  /** Redraw one target's geometry in `color`, slightly thickened, on the overlay. */
+  private drawHighlight(
+    target: HitTarget<TData>,
+    color: string,
+    dpr: number,
+  ): void {
+    if (target.kind === 'element') {
+      this.renderer.drawLines(
+        snapLines(
+          {
+            color,
+            width: target.width + 2,
+            segments: [
+              { x1: target.x1, y1: target.y, x2: target.x2, y2: target.y },
+            ],
+          },
+          dpr,
+        ),
+      );
+      return;
+    }
+    this.renderer.drawLines(
+      snapLines(
+        { color, width: target.width + 2, segments: target.segments },
+        dpr,
+      ),
+    );
+    if (target.node !== undefined) {
+      this.renderer.drawNodes(
+        snapNodes(
+          {
+            color,
+            radius: this.theme.event.nodeRadius + 1,
+            items: [target.node],
+          },
+          dpr,
+        ),
+      );
+    }
+    if (target.arrowhead !== undefined) {
+      this.renderer.drawArrowheads(
+        snapArrowheads(
+          {
+            color,
+            size: target.arrowheadSize + 1,
+            items: [{ ...target.arrowhead, angle: arrowheadAngle(target) }],
+          },
+          dpr,
+        ),
+      );
+    }
+  }
+}
+
+/** Stable key (`kind:id`) for comparing a hit across frames. */
+function hitId(hit: HitResult): string {
+  switch (hit.kind) {
+    case 'element':
+      return `element:${hit.element.id}`;
+    case 'event':
+      return `event:${hit.event.id}`;
+    case 'cluster':
+      return `cluster:${hit.events.map((e) => e.id).join(',')}`;
+  }
+}
+
+/** The `kind:id` key matching {@link hitId} for a target. */
+function targetKey(target: HitTarget): string {
+  const id = target.kind === 'element' ? target.element.id : target.event.id;
+  return `${target.kind}:${id}`;
+}
+
+/** Recover the arrowhead direction from a target's last segment (y-down). */
+function arrowheadAngle(target: {
+  segments: { y1: number }[];
+  arrowhead?: { y: number };
+}): number {
+  const last = target.segments[target.segments.length - 1];
+  if (last === undefined || target.arrowhead === undefined) return Math.PI / 2;
+  return target.arrowhead.y >= last.y1 ? Math.PI / 2 : -Math.PI / 2;
 }

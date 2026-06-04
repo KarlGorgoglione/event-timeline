@@ -9,6 +9,7 @@
 import { useEffect, useRef, type RefObject } from 'react';
 import {
   TimelineEngine,
+  type HitResult,
   type OnDiagnostic,
   type Theme,
   type TimelineData,
@@ -17,6 +18,8 @@ import {
 
 export interface TimelineOptions {
   onDiagnostic?: OnDiagnostic;
+  /** Allow `ctrl`/`⌘`+click to extend the selection (DESIGN.md §9). */
+  multiSelect?: boolean;
 }
 
 export interface UseTimelineArgs<TData> {
@@ -29,6 +32,9 @@ export interface UseTimelineArgs<TData> {
   onReady?: () => void;
   onViewportChange?: (v: TimelineEventMap<TData>['viewportChange']) => void;
   onDataChange?: (d: TimelineEventMap<TData>['dataChange']) => void;
+  onHover?: (hit: HitResult<TData> | null) => void;
+  onClick?: (e: TimelineEventMap<TData>['click']) => void;
+  onSelectionChange?: (ids: string[]) => void;
 }
 
 export function useTimeline<TData>(
@@ -56,6 +62,7 @@ export function useTimeline<TData>(
     const engine = new TimelineEngine<TData>(base, overlay, {
       theme,
       onDiagnostic: options?.onDiagnostic,
+      multiSelect: options?.multiSelect,
     });
     engineRef.current = engine;
 
@@ -65,6 +72,11 @@ export function useTimeline<TData>(
         callbacks.current.onViewportChange?.(v),
       ),
       engine.on('dataChange', (d) => callbacks.current.onDataChange?.(d)),
+      engine.on('hover', (hit) => callbacks.current.onHover?.(hit)),
+      engine.on('click', (e) => callbacks.current.onClick?.(e)),
+      engine.on('selectionChange', (s) =>
+        callbacks.current.onSelectionChange?.(s.ids),
+      ),
     ];
 
     const applySize = (cssW: number, cssH: number) =>

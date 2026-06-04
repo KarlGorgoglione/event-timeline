@@ -14,10 +14,12 @@ import { arrowheadBatch, labelBatch, lineBatch, nodeBatch } from './batch';
 import type {
   ArrowheadSpec,
   BuildContext,
+  HitTarget,
   LabelSpec,
   LineSpec,
   NodeSpec,
 } from './specs';
+import type { TimelineEvent } from '../model/types';
 
 /** Horizontal pixels a riser is nudged per event sharing its pixel column. */
 const SUB_LANE_STEP_PX = 2;
@@ -39,15 +41,19 @@ export function subLaneOffset(k: number): number {
   return Math.min(k, SUB_LANE_MAX) * SUB_LANE_STEP_PX;
 }
 
-export interface ArrowsResult {
+export interface ArrowsResult<TData = unknown> {
   /** Risers and self-loop glyphs. */
   lines: LineSpec[];
   nodes: NodeSpec[];
   arrowheads: ArrowheadSpec[];
   labels: LabelSpec[];
+  /** Identity-carrying arrow geometry for hit-testing (§5). */
+  targets: HitTarget<TData>[];
 }
 
-export function buildArrows(ctx: BuildContext): ArrowsResult {
+export function buildArrows<TData>(
+  ctx: BuildContext<TData>,
+): ArrowsResult<TData> {
   const { camera, rowLayout, data, viewport, theme, band } = ctx;
   const rowHeight = theme.rowHeight;
   const halfRow = rowHeight / 2;
@@ -56,6 +62,7 @@ export function buildArrows(ctx: BuildContext): ArrowsResult {
   const nodes = new Map<string, NodeSpec>();
   const arrowheads = new Map<string, ArrowheadSpec>();
   const labels = new Map<string, LabelSpec>();
+  const targets: HitTarget<TData>[] = [];
   const columnCounts = new Map<number, number>();
 
   for (const event of data.getEvents()) {
@@ -88,10 +95,11 @@ export function buildArrows(ctx: BuildContext): ArrowsResult {
 
     if (event.sourceId === event.targetId) {
       addSelfLoop(
-        { lines, nodes, arrowheads },
+        { lines, nodes, arrowheads, targets },
         { color, width, size, radius },
         x,
         camera.rowToScreenY(sourceRow) + halfRow,
+        event,
       );
       if (event.label !== undefined) {
         pushEventLabel(labels, event.label, theme, event, {
@@ -116,6 +124,15 @@ export function buildArrows(ctx: BuildContext): ArrowsResult {
       y: yTarget,
       angle: yTarget > ySource ? ANGLE_DOWN : ANGLE_UP,
     });
+    targets.push({
+      kind: 'event',
+      event,
+      segments: [{ x1: x, y1: ySource, x2: x, y2: yTarget }],
+      arrowhead: { x, y: yTarget },
+      node: { x, y: ySource },
+      width,
+      arrowheadSize: size,
+    });
     if (event.label !== undefined) {
       pushEventLabel(labels, event.label, theme, event, {
         x: x + width / 2 + EVENT_LABEL_GAP_PX,
@@ -129,6 +146,7 @@ export function buildArrows(ctx: BuildContext): ArrowsResult {
     nodes: [...nodes.values()],
     arrowheads: [...arrowheads.values()],
     labels: [...labels.values()],
+    targets,
   };
 }
 
@@ -136,28 +154,40 @@ export function buildArrows(ctx: BuildContext): ArrowsResult {
  * A self-directed event: a rectangular half-loop above the line returning to a
  * downward arrowhead, with the source dot on the line. No inter-row riser (§1).
  */
-function addSelfLoop(
+function addSelfLoop<TData>(
   batches: {
     lines: Map<string, LineSpec>;
     nodes: Map<string, NodeSpec>;
     arrowheads: Map<string, ArrowheadSpec>;
+    targets: HitTarget<TData>[];
   },
   style: { color: string; width: number; size: number; radius: number },
   x: number,
   y: number,
+  event: TimelineEvent<TData>,
 ): void {
   const loop = style.size * 2;
   const top = y - loop;
-  lineBatch(batches.lines, style.color, style.width).segments.push(
+  const segments = [
     { x1: x, y1: y, x2: x, y2: top },
     { x1: x, y1: top, x2: x + loop, y2: top },
     { x1: x + loop, y1: top, x2: x + loop, y2: y },
-  );
+  ];
+  lineBatch(batches.lines, style.color, style.width).segments.push(...segments);
   nodeBatch(batches.nodes, style.color, style.radius).items.push({ x, y });
   arrowheadBatch(batches.arrowheads, style.color, style.size).items.push({
     x: x + loop,
     y,
     angle: ANGLE_DOWN,
+  });
+  batches.targets.push({
+    kind: 'event',
+    event,
+    segments,
+    arrowhead: { x: x + loop, y },
+    node: { x, y },
+    width: style.width,
+    arrowheadSize: style.size,
   });
 }
 

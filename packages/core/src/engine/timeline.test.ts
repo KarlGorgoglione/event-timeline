@@ -116,6 +116,163 @@ describe('TimelineEngine empty-state framing (§3.1)', () => {
   });
 });
 
+describe('TimelineEngine interactions (§9, §12)', () => {
+  it('select() replaces the selection and emits selectionChange', () => {
+    const engine = makeEngine();
+    engine.resize(800, 400, 1);
+    const emitted: string[][] = [];
+    engine.on('selectionChange', (s) => emitted.push(s.ids));
+
+    engine.select(['a', 'b']);
+    engine.select(['c']);
+
+    expect(emitted).toEqual([['a', 'b'], ['c']]);
+    engine.dispose();
+  });
+
+  it('select() ignores a no-op replacement (no event, no overlay redraw)', () => {
+    const engine = makeEngine();
+    engine.resize(800, 400, 1);
+    const emitted: string[][] = [];
+    engine.on('selectionChange', (s) => emitted.push(s.ids));
+
+    engine.select(['event:e1']);
+    engine.select(['event:e1']); // same membership → no-op
+    engine.select(['event:e1', 'element:a']); // genuine change
+
+    expect(emitted).toEqual([['event:e1'], ['event:e1', 'element:a']]);
+    engine.dispose();
+  });
+
+  it('keys selection by kind:id so a shared raw id never cross-highlights', () => {
+    // An element and an event deliberately share the raw id 'x'. Selecting one
+    // must highlight only that primitive (DESIGN.md §9). The overlay draws a node
+    // dot (`arc`) only for an event highlight, so it is a clean discriminator.
+    const overlay: Record<string, number> = {};
+    let queued: Array<() => void> = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      queued.push(cb);
+      return queued.length;
+    });
+    const flush = () => {
+      const run = queued;
+      queued = [];
+      for (const cb of run) cb();
+    };
+
+    const engine = new TimelineEngine(
+      makeRecordingCanvas(() => {}), // base layer: ignored
+      makeRecordingCanvas((name) => {
+        overlay[name] = (overlay[name] ?? 0) + 1;
+      }),
+    );
+    engine.resize(800, 400, 1);
+    engine.setData({
+      elements: [
+        { id: 'x', label: 'X' },
+        { id: 'b', label: 'B' },
+      ],
+      events: [
+        { id: 'x', sourceId: 'x', targetId: 'b', time: Date.UTC(2026, 0, 1) },
+      ],
+    });
+    flush(); // base frame builds this frame's hit targets
+
+    const overlayArcs = () => {
+      for (const k of Object.keys(overlay)) delete overlay[k];
+      flush();
+      return overlay.arc ?? 0;
+    };
+
+    engine.select(['element:x']); // element only → no event node dot
+    expect(overlayArcs()).toBe(0);
+
+    engine.select(['event:x']); // event only → node dot drawn
+    expect(overlayArcs()).toBeGreaterThan(0);
+
+    engine.dispose();
+  });
+
+  it('re-renders the selection highlight when the base redraws (pan/zoom)', () => {
+    // Regression: the overlay highlight is built from this frame's targets, which
+    // the base pass rebuilds at the new camera position. A base redraw must drag
+    // the overlay with it, or the highlight stays pinned on screen while the line
+    // pans away beneath it.
+    const overlay: Record<string, number> = {};
+    let queued: Array<() => void> = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      queued.push(cb);
+      return queued.length;
+    });
+    const flush = () => {
+      const run = queued;
+      queued = [];
+      for (const cb of run) cb();
+    };
+
+    const engine = new TimelineEngine(
+      makeRecordingCanvas(() => {}), // base: ignored
+      makeRecordingCanvas((name) => {
+        overlay[name] = (overlay[name] ?? 0) + 1;
+      }),
+    );
+    engine.resize(800, 400, 1);
+    engine.setData({
+      elements: [
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ],
+      // An event gives element 'a' an extent, so its line (and hit target) is
+      // drawn — event-less elements are not rendered (§1).
+      events: [
+        { id: 'e1', sourceId: 'a', targetId: 'b', time: Date.UTC(2026, 0, 1) },
+      ],
+    });
+    engine.select(['element:a']);
+    flush();
+    expect(overlay.stroke ?? 0).toBeGreaterThan(0); // highlight drawn once
+
+    // A base-only redraw (here a resize; a pan/zoom is the same path) must
+    // re-stroke the highlight on the overlay against the rebuilt targets.
+    for (const k of Object.keys(overlay)) delete overlay[k];
+    engine.resize(900, 400, 1);
+    flush();
+    expect(overlay.stroke ?? 0).toBeGreaterThan(0);
+
+    engine.dispose();
+  });
+
+  it('zoomToRange frames the requested span across the viewport', () => {
+    const engine = makeEngine();
+    engine.resize(800, 400, 1);
+    // Wide data extent so the sub-range is within the zoom bounds (not clamped).
+    engine.setData({
+      elements: [
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ],
+      events: [
+        { id: 'e1', sourceId: 'a', targetId: 'b', time: Date.UTC(2026, 0, 1) },
+        {
+          id: 'e2',
+          sourceId: 'b',
+          targetId: 'a',
+          time: Date.UTC(2026, 11, 31),
+        },
+      ],
+    });
+
+    const start = Date.UTC(2026, 3, 1);
+    const end = Date.UTC(2026, 4, 1);
+    engine.zoomToRange(start, end);
+
+    const { timeRange } = engine.getViewport();
+    expect(timeRange[0]).toBeCloseTo(start, -3);
+    expect(timeRange[1]).toBeCloseTo(end, -3);
+    engine.dispose();
+  });
+});
+
 describe('TimelineEngine Phase 2 content (§1, §4)', () => {
   it('emits arrows, nodes, and labels when a frame draws', () => {
     const calls: Record<string, number> = {};

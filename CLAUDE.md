@@ -14,19 +14,26 @@ a numbered phased delivery plan (§15). Read the relevant section before
 implementing — code comments reference these sections by number (e.g. "§5",
 "DESIGN.md §12"). Keep that habit when adding code.
 
-**Current state: Phase 2 complete (arrows, labels, element identity).** On top
-of the Phase 1 skeleton, the engine now renders direction-aware orthogonal
-arrows (riser + source node dot + target arrowhead), self-event loop glyphs,
-event labels, and element label+icon at each line start with a sticky-left
-fallback, all culled by the §5 row-interval test. `drawBase` is decomposed into
-pure CSS-px "primitive builder" modules (`render/{specs,rowBand,elementLines,
-arrows,snap,iconCache,batch}.ts`) that return draw specs; a single snap pass
-converts to device px and the engine orchestrates build→snap→draw. The
-`Renderer` seam stays backend-free (`ImageBatch` carries an opaque
-`RendererImage`); the demo gains a 10k synthetic-dataset toggle. Zoom,
-hit-testing, the temporal index, LOD/clustering, and richer layout land in
-Phase 3+. When building a feature, find its phase in §15 and its design section
-first.
+**Current state: Phase 3 complete (interactions).** On top of the Phase 2
+renderer (direction-aware orthogonal arrows — riser + source node dot + target
+arrowhead — self-event loop glyphs, event labels, and element label+icon at each
+line start with a sticky-left fallback, all culled by the §5 row-interval test;
+`drawBase` decomposed into pure CSS-px "primitive builder" modules
+`render/{specs,rowBand,elementLines,arrows,snap,iconCache,batch}.ts` feeding a
+single snap pass; a backend-free `Renderer` seam), the engine now handles
+interaction (§9, §12): zoom-about-cursor, vertical scroll, a click/pan pointer
+state machine, a 64px screen-space hit grid rebuilt once per base draw (§5),
+per-frame coalesced hover, and click selection. Hover/selection draw on an
+independent overlay layer (`hover`/`selectionColor` from the Theme) that
+re-renders whenever the base does, so highlights track content under pan/zoom.
+The builders emit identity-carrying `HitTarget` specs from the same geometry
+they already compute (DRY), feeding both the hit grid and the overlay. The
+`@timeline/react` binding adds a portal-based default `Tooltip` plus
+`onHover`/`onClick`/`onSelectionChange` callbacks and `select`/`zoomToRange` on
+the imperative handle; the demo gains a status bar, multi-select, and a 10k
+synthetic-dataset toggle. The temporal index, LOD/clustering, and richer layout
+land in Phase 4+. When building a feature, find its phase in §15 and its design
+section first.
 
 ## Commands
 
