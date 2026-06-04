@@ -26,6 +26,14 @@ export default defineConfig({
           include: ['src/**/*.test.{ts,tsx}'],
         },
       },
+      {
+        test: {
+          name: 'demo',
+          root: './examples/demo',
+          environment: 'node',
+          include: ['src/**/*.test.ts'],
+        },
+      },
     ],
   },
 });

@@ -23,10 +23,20 @@ function mulberry32(seed: number): () => number {
 
 const DAY_MS = 86_400_000;
 
+/** Entity type in the AML scenario (drives labels / status bar). */
+export type EntityKind = 'client' | 'external' | 'cash';
+
+/** Transaction-monitoring pattern an item participates in (AML scenario). */
+export type AmlPattern = 'structuring' | 'circular' | 'passthrough' | 'fanout';
+
 /** A tiny opaque payload, echoed back in callbacks; drives the demo's resolvers. */
 export interface DemoDatum {
   /** Bucket 0–4 used by the demo's data-driven style resolvers (§11). */
   category: number;
+  /** Entity type, set by the AML scenario; absent in the other datasets. */
+  kind?: EntityKind;
+  /** AML pattern this item belongs to; absent = background activity. */
+  pattern?: AmlPattern;
 }
 
 /** Stable category bucket for an entity index (demo resolvers key on this). */
