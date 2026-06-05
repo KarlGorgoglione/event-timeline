@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Timeline,
   barycenter,
@@ -12,7 +12,7 @@ import {
   type TimelineHandle,
 } from '@timeline/react';
 import { demoData } from './fixture';
-import { makeSynthetic, type DemoDatum } from './synthetic';
+import { makeStreamBatch, makeSynthetic, type DemoDatum } from './synthetic';
 import { makeAmlScenario } from './scenario';
 
 const LAYOUT_NAMES = ['byFirstEvent', 'barycenter', 'explicit'] as const;
@@ -22,6 +22,10 @@ const LAYOUTS: Record<LayoutName, LayoutStrategy> = {
   barycenter,
   explicit,
 };
+
+/** Events appended per streaming tick, and the tick interval (Phase 7, §10). */
+const STREAM_BATCH = 12;
+const STREAM_INTERVAL_MS = 250;
 
 // --- Phase 6 customisation (§11) ---------------------------------------------
 
@@ -110,6 +114,14 @@ export function App() {
   const [hover, setHover] = useState<HitResult<DemoDatum> | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [viewport, setViewport] = useState({ pxPerMs: 0, scrollY: 0 });
+  const [streaming, setStreaming] = useState(false);
+  const [streamCount, setStreamCount] = useState(0);
+  // Latest visible time window — streamed batches land inside it so new events
+  // appear wherever the user is looking. A ref avoids re-running the interval
+  // effect on every pan/zoom. The counter keeps streamed ids unique across
+  // dataset toggles (a toggle's setData clears prior streamed events).
+  const viewRef = useRef<[number, number]>([0, 0]);
+  const streamCounterRef = useRef(0);
 
   // Stable callbacks so the engine isn't re-created on every render (§12).
   const onHover = useCallback(
@@ -121,8 +133,10 @@ export function App() {
     [],
   );
   const onViewportChange = useCallback(
-    (v: { pxPerMs: number; scrollY: number }) =>
-      setViewport({ pxPerMs: v.pxPerMs, scrollY: v.scrollY }),
+    (v: { pxPerMs: number; scrollY: number; timeRange: [number, number] }) => {
+      viewRef.current = v.timeRange;
+      setViewport({ pxPerMs: v.pxPerMs, scrollY: v.scrollY });
+    },
     [],
   );
   // A new `options` reference (on layout change) re-creates the engine and
@@ -167,6 +181,35 @@ export function App() {
   );
   const amlData = useMemo(() => makeAmlScenario(), []);
   const data = aml ? amlData : (synthetic50k ?? (big ? synthetic : demoData));
+
+  // A dataset toggle's prop `setData` clears prior streamed events, so reset the
+  // displayed count to match (and keep streamed ids unique via the counter ref).
+  useEffect(() => {
+    setStreamCount(0);
+  }, [data]);
+
+  // Phase 7 streaming (§10): while on, append a small batch via the imperative
+  // `addEvents` each tick — no full `setData`, so existing rows stay put and the
+  // base layer just redraws the wider extent. Pan/zoom stays interactive.
+  useEffect(() => {
+    if (!streaming) return;
+    const id = setInterval(() => {
+      const handle = ref.current;
+      const [tStart, tEnd] = viewRef.current;
+      if (handle === null || tEnd <= tStart) return;
+      const batch = makeStreamBatch(
+        data.elements,
+        streamCounterRef.current,
+        STREAM_BATCH,
+        tStart,
+        tEnd,
+      );
+      streamCounterRef.current += batch.length;
+      handle.addEvents(batch);
+      setStreamCount((n) => n + batch.length);
+    }, STREAM_INTERVAL_MS);
+    return () => clearInterval(id);
+  }, [streaming, data]);
 
   return (
     <main
@@ -257,6 +300,14 @@ export function App() {
         >
           labels: {labelled ? 'on' : 'off'}
         </button>
+        <button
+          type="button"
+          data-testid="toggle-stream"
+          onClick={() => setStreaming((v) => !v)}
+          style={{ font: '12px system-ui' }}
+        >
+          {streaming ? '■ Stop stream' : '▶ Stream'}
+        </button>
       </header>
       <div style={{ flex: 1, minHeight: 0 }}>
         <Timeline<DemoDatum>
@@ -288,6 +339,7 @@ export function App() {
         </span>
         <span data-testid="status-pxperms">pxPerMs: {viewport.pxPerMs}</span>
         <span data-testid="status-scrolly">scrollY: {viewport.scrollY}</span>
+        <span data-testid="status-streamed">streamed: {streamCount}</span>
       </footer>
     </main>
   );

@@ -27,6 +27,8 @@ export interface TimelineOptions {
   layout?: LayoutStrategy;
   /** Trailing-edge delay (ms) for coalesced incremental re-layout (DESIGN.md §7). */
   layoutDebounceMs?: number;
+  /** Re-layout policy for streaming mutations (DESIGN.md §7, §10). Default stable-append. */
+  streamingLayout?: 'stable-append' | 'full';
   /** Allow `ctrl`/`⌘`+click to extend the selection (DESIGN.md §9). */
   multiSelect?: boolean;
   /** Event collapsing/aggregation config (DESIGN.md §6). */
@@ -82,6 +84,7 @@ export function useTimeline<TData>(
       onDiagnostic: options?.onDiagnostic,
       layout: options?.layout,
       layoutDebounceMs: options?.layoutDebounceMs,
+      streamingLayout: options?.streamingLayout,
       multiSelect: options?.multiSelect,
       clustering: options?.clustering,
       lod: options?.lod,

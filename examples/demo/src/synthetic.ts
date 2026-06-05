@@ -93,3 +93,34 @@ export function makeSynthetic(
 
   return { elements, events };
 }
+
+/**
+ * A batch of events for the Phase 7 streaming demo (DESIGN.md §10). Events
+ * reference *existing* elements (so none drop as dangling edges) and land at
+ * random times across `[tStart, tEnd]` — the current visible window — so each
+ * batch appears immediately wherever the user has panned/zoomed. `startIndex`
+ * keeps ids (`stream-N`) and the PRNG seed unique per batch.
+ */
+export function makeStreamBatch(
+  elements: readonly TimelineElement<DemoDatum>[],
+  startIndex: number,
+  count: number,
+  tStart: number,
+  tEnd: number,
+): TimelineEvent<DemoDatum>[] {
+  const rand = mulberry32(startIndex + 1);
+  const span = Math.max(0, tEnd - tStart);
+  const batch: TimelineEvent<DemoDatum>[] = [];
+  for (let i = 0; i < count; i++) {
+    const sourceIndex = Math.floor(rand() * elements.length);
+    const targetIndex = Math.floor(rand() * elements.length);
+    batch.push({
+      id: `stream-${startIndex + i}`,
+      sourceId: elements[sourceIndex]!.id,
+      targetId: elements[targetIndex]!.id,
+      time: tStart + Math.floor(rand() * span),
+      data: { category: sourceIndex % CATEGORY_COUNT },
+    });
+  }
+  return batch;
+}

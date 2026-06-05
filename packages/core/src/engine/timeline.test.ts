@@ -571,3 +571,113 @@ describe('TimelineEngine Phase 2 content (§1, §4)', () => {
     engine.dispose();
   });
 });
+
+describe('TimelineEngine streaming mutations (§7, §10)', () => {
+  const elements = [
+    { id: 'a', label: 'A' },
+    { id: 'b', label: 'B' },
+  ];
+  const seed: TimelineData = {
+    elements,
+    events: [{ id: 'e1', sourceId: 'a', targetId: 'b', time: 100 }],
+  };
+
+  // All rows fit in a tall viewport, so visibleRowRange[1] reports the row count.
+  const rowCount = (engine: TimelineEngine): number => {
+    engine.resize(800, 100_000, 1);
+    return engine.getViewport().visibleRowRange[1];
+  };
+
+  it('addEvents emits dataChange with the insert count', () => {
+    const engine = makeEngine();
+    engine.resize(800, 400, 1);
+    engine.setData(seed);
+    const changes: { added: number; removed: number; updated: number }[] = [];
+    engine.on('dataChange', (d) => changes.push(d));
+
+    engine.addEvents([{ id: 'e2', sourceId: 'b', targetId: 'a', time: 200 }]);
+
+    expect(changes).toEqual([{ added: 1, removed: 0, updated: 0 }]);
+    engine.dispose();
+  });
+
+  it('a no-op mutation emits nothing (lenient unknown removal)', () => {
+    const engine = makeEngine();
+    engine.resize(800, 400, 1);
+    engine.setData(seed);
+    const changes: unknown[] = [];
+    engine.on('dataChange', (d) => changes.push(d));
+
+    engine.removeEvents(['does-not-exist']);
+
+    expect(changes).toHaveLength(0);
+    engine.dispose();
+  });
+
+  it('addElements appends a row synchronously under stable-append (default)', () => {
+    const engine = makeEngine();
+    engine.setData(seed);
+    expect(rowCount(engine)).toBe(2);
+
+    engine.addElements([{ id: 'c', label: 'C' }]);
+    // No timer needed: stable-append applies inline so the row appears at once.
+    expect(rowCount(engine)).toBe(3);
+    engine.dispose();
+  });
+
+  it('updateElement re-renders the row with the patched label', () => {
+    // Controllable rAF so we can force exactly one base frame per state.
+    let queued: Array<() => void> = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      queued.push(cb);
+      return queued.length;
+    });
+    const flush = () => {
+      const run = queued;
+      queued = [];
+      for (const cb of run) cb();
+    };
+    const labels: string[] = [];
+    const record = (name: string, args: unknown[]) => {
+      if (name === 'fillText') labels.push(String(args[0]));
+    };
+    const engine = new TimelineEngine(
+      makeRecordingCanvas(record),
+      makeRecordingCanvas(record),
+    );
+    engine.resize(800, 400, 1);
+    engine.setData(seed);
+    flush();
+    expect(labels).toContain('A');
+
+    labels.length = 0;
+    engine.updateElement('a', { label: 'A2' });
+    flush();
+    // The patch marked the base layer dirty, so the redraw paints the new label.
+    expect(labels).toContain('A2');
+    expect(labels).not.toContain('A');
+    engine.dispose();
+  });
+
+  it('streamingLayout:"full" defers re-layout to the debounced tick', () => {
+    vi.useFakeTimers();
+    try {
+      const engine = new TimelineEngine(makeCanvas(), makeCanvas(), {
+        streamingLayout: 'full',
+        layoutDebounceMs: 120,
+      });
+      engine.setData(seed);
+      expect(rowCount(engine)).toBe(2);
+
+      engine.addElements([{ id: 'c', label: 'C' }]);
+      // Debounced: the new row is not laid out until the trailing edge fires.
+      expect(rowCount(engine)).toBe(2);
+
+      vi.advanceTimersByTime(120);
+      expect(rowCount(engine)).toBe(3);
+      engine.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

@@ -7,3 +7,4 @@ export type { LayoutStrategy } from './types';
 export { byFirstEvent } from './byFirstEvent';
 export { barycenter } from './barycenter';
 export { explicit } from './explicit';
+export { stableAppend } from './stableAppend';

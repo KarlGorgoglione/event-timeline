@@ -41,4 +41,28 @@ describe('<Timeline />', () => {
     expect(typeof ref.current?.fit).toBe('function');
     expect(typeof ref.current?.setData).toBe('function');
   });
+
+  it('exposes the streaming methods on the handle (§10, §12)', () => {
+    const ref = createRef<TimelineHandle>();
+    render(<Timeline ref={ref} data={data} />);
+    expect(typeof ref.current?.addEvents).toBe('function');
+    expect(typeof ref.current?.removeEvents).toBe('function');
+    expect(typeof ref.current?.addElements).toBe('function');
+    expect(typeof ref.current?.updateElement).toBe('function');
+  });
+
+  it('addEvents on the handle fires onDataChange without a full setData', () => {
+    const ref = createRef<TimelineHandle>();
+    const changes: { added: number; removed: number; updated: number }[] = [];
+    render(
+      <Timeline ref={ref} data={data} onDataChange={(d) => changes.push(d)} />,
+    );
+    changes.length = 0; // ignore the initial setData from mounting with data
+
+    ref.current?.addEvents([
+      { id: 'e2', sourceId: 'b', targetId: 'a', time: Date.UTC(2026, 1, 1) },
+    ]);
+
+    expect(changes).toEqual([{ added: 1, removed: 0, updated: 0 }]);
+  });
 });

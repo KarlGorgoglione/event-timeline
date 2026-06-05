@@ -6,12 +6,13 @@
 // validation of its own (delegates to DataStore).
 
 import { byFirstEvent } from '../layout/byFirstEvent';
+import { stableAppend } from '../layout/stableAppend';
 import type { LayoutStrategy } from '../layout/types';
 import { bySourceTargetColumn } from '../cluster/strategies';
 import type { ClusterStrategy } from '../cluster/types';
 import { computeRowLayout, type RowLayout } from '../layout/positions';
 import type { OnDiagnostic } from '../model/diagnostics';
-import { DataStore } from '../model/store';
+import { DataStore, type DataChangeCounts } from '../model/store';
 import type {
   ElementStyle,
   EventStyle,
@@ -116,6 +117,14 @@ export interface TimelineEngineOptions<TData = unknown> {
   layoutDebounceMs?: number;
   /** Allow `ctrl`/`⌘`+click to extend the selection (DESIGN.md §9). */
   multiSelect?: boolean;
+  /**
+   * Re-layout policy for incremental mutations (`addEvents`/… §10). Default
+   * `'stable-append'`: existing rows stay put and new elements append, applied
+   * synchronously so updates appear at once with no jarring reshuffle (§7).
+   * `'full'` opts into re-running the configured {@link layout} strategy on the
+   * debounced {@link layoutDebounceMs} seam. `setData` always relayouts in full.
+   */
+  streamingLayout?: 'stable-append' | 'full';
   clustering?: ClusteringOptions;
   lod?: LodOptions;
   /** Data-driven per-item style overrides (DESIGN.md §11). */
@@ -145,6 +154,8 @@ export class TimelineEngine<TData = unknown> {
   private readonly pointer: PointerController;
   private readonly multiSelect: boolean;
   private readonly layoutStrategy: LayoutStrategy;
+  /** Incremental re-layout policy (DESIGN.md §7, §10). */
+  private readonly streamingLayout: 'stable-append' | 'full';
   /**
    * Coalesced incremental re-layout (DESIGN.md §7). Streaming mutations
    * (`addEvents`/`removeEvents`, §10) call {@link scheduleLayoutRecompute} so a
@@ -224,9 +235,10 @@ export class TimelineEngine<TData = unknown> {
       rowGap: this.theme.rowGap,
     };
     this.layoutStrategy = options.layout ?? byFirstEvent;
+    this.streamingLayout = options.streamingLayout ?? 'stable-append';
     this.debouncedRecomputeLayout = debounce(() => {
       if (this.disposed) return;
-      this.recomputeLayout();
+      this.recomputeLayout('full');
       this.scheduler.markDirty('base');
       this.emitViewportChange();
     }, options.layoutDebounceMs ?? DEFAULT_LAYOUT_DEBOUNCE_MS);
@@ -283,8 +295,44 @@ export class TimelineEngine<TData = unknown> {
 
   setData(data: TimelineData<TData>): void {
     const counts = this.store.setData(data);
-    this.recomputeLayout();
+    this.recomputeLayout('full');
     this.maybeFit();
+    this.emitter.emit('dataChange', counts);
+    this.scheduler.markDirty('base');
+    this.emitViewportChange();
+  }
+
+  /** Incrementally insert events without a full rebuild (DESIGN.md §10). */
+  addEvents(events: readonly TimelineEvent<TData>[]): void {
+    this.applyMutation(this.store.addEvents(events));
+  }
+
+  /** Remove events by id (DESIGN.md §10). */
+  removeEvents(ids: readonly string[]): void {
+    this.applyMutation(this.store.removeEvents(ids));
+  }
+
+  /** Append elements with stable-append layout (DESIGN.md §7, §10). */
+  addElements(elements: readonly TimelineElement<TData>[]): void {
+    this.applyMutation(this.store.addElements(elements));
+  }
+
+  /** Patch an element's label/icon/style/order in place (DESIGN.md §10). */
+  updateElement(id: string, patch: Partial<TimelineElement<TData>>): void {
+    this.applyMutation(this.store.updateElement(id, patch));
+  }
+
+  /**
+   * Shared tail for the incremental mutations (§10): a no-op change emits and
+   * redraws nothing; otherwise re-layout (stable-append by default, §7), emit
+   * `dataChange`, and mark the base dirty. Streaming never refits — that would
+   * jerk the camera mid-stream.
+   */
+  private applyMutation(counts: DataChangeCounts): void {
+    if (counts.added === 0 && counts.removed === 0 && counts.updated === 0) {
+      return;
+    }
+    this.scheduleLayoutRecompute();
     this.emitter.emit('dataChange', counts);
     this.scheduler.markDirty('base');
     this.emitViewportChange();
@@ -398,23 +446,37 @@ export class TimelineEngine<TData = unknown> {
     );
   }
 
-  private recomputeLayout(): void {
-    const orderedIds = this.layoutStrategy.order(
-      this.store.getElements(),
-      this.store.getEvents(),
-    );
+  /**
+   * Recompute row order + positions (DESIGN.md §7). `'full'` runs the configured
+   * strategy (used by `setData` and the opt-in streaming relayout); `'stable-append'`
+   * keeps existing rows and appends new elements (the streaming default, §10).
+   */
+  private recomputeLayout(mode: 'full' | 'stable-append' = 'full'): void {
+    const orderedIds =
+      mode === 'full'
+        ? this.layoutStrategy.order(
+            this.store.getElements(),
+            this.store.getEvents(),
+          )
+        : stableAppend(this.rowLayout.orderedIds, this.store.getElements());
     this.rowLayout = computeRowLayout(orderedIds, this.metrics);
     this.camera.clampScrollY(this.rowLayout.contentHeight, this.viewport);
   }
 
   /**
-   * Request a coalesced re-layout after an *incremental* mutation (DESIGN.md §7,
-   * §10): a burst of streaming `addEvents`/`removeEvents` re-runs layout once on
-   * the trailing edge rather than per call. Full `setData` does not use this —
-   * it recomputes synchronously so `fit`/scroll-clamp see `contentHeight` now.
+   * Apply layout after an *incremental* mutation (DESIGN.md §7, §10). By default
+   * (`streamingLayout: 'stable-append'`) this runs synchronously so new rows and
+   * extents appear at once with no reshuffle; under `'full'` a burst is coalesced
+   * into one trailing strategy recompute via the debounced seam. Full `setData`
+   * bypasses this and recomputes synchronously so `fit`/scroll-clamp see
+   * `contentHeight` immediately.
    */
   private scheduleLayoutRecompute(): void {
-    this.debouncedRecomputeLayout();
+    if (this.streamingLayout === 'full') {
+      this.debouncedRecomputeLayout();
+    } else {
+      this.recomputeLayout('stable-append');
+    }
   }
 
   /**

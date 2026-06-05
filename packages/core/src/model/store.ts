@@ -37,8 +37,14 @@ export class DataStore<TData = unknown> {
   private extents = new Map<string, Extent>();
   /** Element id → indices into {@link events}, in time order (§5). */
   private eventIndicesByElement = new Map<string, number[]>();
-  /** Monotonic insertion counter, the stable tiebreak for equal-time events. */
+  /** Per-event insertion order, the stable tiebreak for equal-time events. */
   private seq = new Map<TimelineEvent<TData>, number>();
+  /**
+   * Monotonic source for {@link seq}. Never reset except by {@link clear}, so
+   * an event inserted after a removal still sorts *after* survivors at the same
+   * time — using `events.length` would recycle a live seq and corrupt the order.
+   */
+  private seqCounter = 0;
 
   constructor(options: DataStoreOptions = {}) {
     this.onDiagnostic = options.onDiagnostic ?? createDefaultDiagnosticSink();
@@ -62,6 +68,103 @@ export class DataStore<TData = unknown> {
     return { added, removed: 0, updated: 0 };
   }
 
+  /**
+   * Incrementally insert events (DESIGN.md §10). Each row runs through the same
+   * validated {@link insertEvent} as `setData` (lenient: invalid rows drop), then
+   * a single {@link reindex} re-sorts and rebuilds buckets. Appending a batch and
+   * re-sorting the mostly-sorted array is the §10 "single merge" in practice — no
+   * parallel index builder (the §5 single-build-path invariant).
+   */
+  addEvents(events: readonly TimelineEvent<TData>[]): DataChangeCounts {
+    let added = 0;
+    for (const event of events) {
+      if (this.insertEvent(event)) added++;
+    }
+    if (added > 0) this.reindex();
+    return { added, removed: 0, updated: 0 };
+  }
+
+  /**
+   * Incrementally insert elements with stable-append semantics (DESIGN.md §10):
+   * appended in input order, existing elements untouched. Duplicates drop
+   * leniently. Events are unchanged, so no reindex is needed.
+   */
+  addElements(elements: readonly TimelineElement<TData>[]): DataChangeCounts {
+    let added = 0;
+    for (const element of elements) {
+      if (this.insertElement(element)) added++;
+    }
+    return { added, removed: 0, updated: 0 };
+  }
+
+  /**
+   * Remove events by id (DESIGN.md §10). Unknown ids are ignored (lenient).
+   * Extents shrink, so the touched elements' extents are recomputed from their
+   * surviving events after the buckets are rebuilt by {@link reindex}.
+   */
+  removeEvents(ids: readonly string[]): DataChangeCounts {
+    const affected = new Set<string>();
+    let removed = 0;
+    for (const id of ids) {
+      const event = this.eventById.get(id);
+      if (event === undefined) continue;
+      this.eventById.delete(id);
+      this.seq.delete(event);
+      affected.add(event.sourceId);
+      affected.add(event.targetId);
+      removed++;
+    }
+    if (removed === 0) return { added: 0, removed: 0, updated: 0 };
+
+    this.events = this.events.filter((e) => this.eventById.has(e.id));
+    this.reindex();
+    for (const id of affected) this.recomputeExtentFor(id);
+    return { added: 0, removed, updated: 0 };
+  }
+
+  /**
+   * Patch an element in place (DESIGN.md §10): style/label/icon/order overrides
+   * without a full rebuild. The `id` is immutable. Unknown ids are a lenient
+   * no-op. Extents are event-derived, so they are unaffected.
+   *
+   * Note: patching `order` only changes row position under the `explicit`
+   * layout with `streamingLayout: 'full'`; the default stable-append streaming
+   * layout deliberately never reshuffles existing rows (§7).
+   */
+  updateElement(
+    id: string,
+    patch: Partial<TimelineElement<TData>>,
+  ): DataChangeCounts {
+    const existing = this.elementById.get(id);
+    if (existing === undefined) return { added: 0, removed: 0, updated: 0 };
+    const slot = this.elements.indexOf(existing);
+    // `elementById` and `elements` are kept in sync, so this is always >= 0;
+    // guard defensively rather than silently writing an out-of-range index.
+    if (slot === -1) return { added: 0, removed: 0, updated: 0 };
+    const updated: TimelineElement<TData> = { ...existing, ...patch, id };
+    this.elements[slot] = updated;
+    this.elementById.set(id, updated);
+    return { added: 0, removed: 0, updated: 1 };
+  }
+
+  /**
+   * Recompute one element's extent from its surviving events (§5). Reads the
+   * rebuilt bucket; an event-less element has no extent and is removed.
+   */
+  private recomputeExtentFor(id: string): void {
+    const indices = this.eventIndicesByElement.get(id);
+    if (indices === undefined || indices.length === 0) {
+      this.extents.delete(id);
+      return;
+    }
+    let extent: Extent | undefined;
+    for (const index of indices) {
+      const event = this.events[index] as TimelineEvent<TData>;
+      extent = widenExtent(extent, event.time);
+    }
+    if (extent !== undefined) this.extents.set(id, extent);
+  }
+
   private clear(): void {
     this.elements = [];
     this.elementById.clear();
@@ -70,6 +173,7 @@ export class DataStore<TData = unknown> {
     this.extents.clear();
     this.eventIndicesByElement.clear();
     this.seq.clear();
+    this.seqCounter = 0;
   }
 
   /**
@@ -134,7 +238,7 @@ export class DataStore<TData = unknown> {
       return false;
     }
 
-    this.seq.set(event, this.events.length);
+    this.seq.set(event, this.seqCounter++);
     this.events.push(event);
     this.eventById.set(event.id, event);
     // An event widens both endpoints' extents; a self-event (source === target)

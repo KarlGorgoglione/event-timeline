@@ -14,7 +14,7 @@ a numbered phased delivery plan (§15). Read the relevant section before
 implementing — code comments reference these sections by number (e.g. "§5",
 "DESIGN.md §12"). Keep that habit when adding code.
 
-**Current state: Phase 6 complete (theming & customisation).** Phase 3 (interactions) layered
+**Current state: Phase 7 complete (live/streaming updates).** Phase 3 (interactions) layered
 on the Phase 2 renderer: direction-aware orthogonal arrows (riser + source node
 dot + target arrowhead), self-event loop glyphs, event labels, and element
 label+icon at each line start with a sticky-left fallback, all culled by the §5
@@ -77,8 +77,29 @@ event style). `TimelineEngineOptions<TData>` gains `styleResolvers`/`formatters`
 `styleResolvers`/`formatters` props per §12); the demo adds theme/colours/labels
 toggles (a light `Partial<Theme>`, data-driven palette resolvers, upper-casing
 formatters). Core ships no theme preset beyond `defaultTheme` — theming stays
-host-driven. The temporal index's bucket consumers and incremental updates land in
-Phase 7.
+host-driven.
+
+Phase 7 (§10, §7, §12) adds **live/streaming updates**: four incremental mutations
+(`addEvents`/`removeEvents`/`addElements`/`updateElement` — §10 intentionally has no
+`removeElements`) that re-enter the §5 single index-build path rather than rebuilding.
+`addEvents`/`removeEvents` reuse the private `insertEvent`/`reindex` (append-then-sort
+is the §10 "single merge" under V8 Timsort); `removeEvents` re-derives only the touched
+elements' extents via `recomputeExtentFor` (shrink, or delete when an element loses its
+last event); `updateElement` is an in-place immutable-`id` patch merge. A correctness
+fix swaps the stable-sort tiebreak from `events.length` to a monotonic `seqCounter`
+(reset only by `clear`) so equal-`time` `(time, seq)` ordering survives remove-then-add.
+A new pure `layout/stableAppend.ts` helper (engine-internal, **not** a `LayoutStrategy` —
+it needs prior order, so it stays beside the strategies, not exported from the public
+barrel) slots new rows in without reshuffling existing ones. The engine adds a shared
+`applyMutation` (no-op short-circuit → relayout → `dataChange` → mark base dirty;
+deliberately no `maybeFit`, so streaming never jerks the camera) and a
+`recomputeLayout(mode)` split: `'full'` runs the strategy (used by `setData`),
+`'stable-append'` applies the helper synchronously. A new `streamingLayout:
+'stable-append' | 'full'` option (default `'stable-append'`) routes the opt-in `'full'`
+relayout through the existing debounced `scheduleLayoutRecompute()` seam. The four
+mutations are exposed on the React imperative handle and `streamingLayout` through
+`TimelineOptions`; the demo gains a Stream toggle that appends batches via `addEvents`.
+
 When building a feature, find its phase in §15 and its design section first.
 
 ## Commands

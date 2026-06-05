@@ -16,6 +16,8 @@ import {
   type Theme,
   type Time,
   type TimelineData,
+  type TimelineElement,
+  type TimelineEvent,
   type TimelineEventMap,
 } from '@timeline/core';
 import { useTimeline, type TimelineOptions } from './useTimeline';
@@ -56,6 +58,12 @@ export interface TimelineHandle<TData = unknown> {
   getViewport(): TimelineEventMap<TData>['viewportChange'];
   resize(cssW: number, cssH: number, dpr: number): void;
   setData(data: TimelineData<TData>): void;
+  // Streaming methods (DESIGN.md §10): incremental updates that bypass the
+  // prop-driven full `setData`, for high-frequency hosts.
+  addEvents(events: readonly TimelineEvent<TData>[]): void;
+  removeEvents(ids: readonly string[]): void;
+  addElements(elements: readonly TimelineElement<TData>[]): void;
+  updateElement(id: string, patch: Partial<TimelineElement<TData>>): void;
 }
 
 const containerStyle: CSSProperties = {
@@ -127,6 +135,10 @@ function TimelineInner<TData>(
       getViewport: () => engineRef.current?.getViewport() ?? EMPTY_VIEWPORT,
       resize: (w, h, dpr) => engineRef.current?.resize(w, h, dpr),
       setData: (d) => engineRef.current?.setData(d),
+      addEvents: (e) => engineRef.current?.addEvents(e),
+      removeEvents: (ids) => engineRef.current?.removeEvents(ids),
+      addElements: (el) => engineRef.current?.addElements(el),
+      updateElement: (id, patch) => engineRef.current?.updateElement(id, patch),
     }),
     [engineRef],
   );
