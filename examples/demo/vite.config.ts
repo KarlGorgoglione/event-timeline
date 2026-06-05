@@ -5,7 +5,12 @@ import react from '@vitejs/plugin-react';
 // Resolve the workspace packages to their TypeScript source so the demo gets
 // live hot-reload into the library and runs on a fresh clone without a prior
 // `pnpm build`. The published packages still consume the built `dist` output.
-export default defineConfig({
+export default defineConfig(({ command }) => ({
+  // GitHub Pages serves project sites under `/<repo>/`, so production builds
+  // need that path prefix to resolve assets; the dev server stays at root.
+  // `DEMO_BASE` overrides both (e.g. custom domain → '/', or a fork's repo).
+  base:
+    process.env.DEMO_BASE ?? (command === 'build' ? '/event-timeline/' : '/'),
   plugins: [react()],
   resolve: {
     alias: {
@@ -36,4 +41,4 @@ export default defineConfig({
     port: 4173,
     strictPort: true,
   },
-});
+}));

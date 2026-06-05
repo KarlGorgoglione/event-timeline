@@ -5,6 +5,9 @@ A Canvas-based, domain-agnostic timeline library for React. It renders
 a point in time), designed to stay smooth while panning/zooming large datasets.
 See [`docs/DESIGN.md`](docs/DESIGN.md) for the full architecture and phased plan.
 
+**▶ [Live demo](https://karlgorgoglione.github.io/event-timeline/)** — pan, zoom,
+and toggle the 10k/50k synthetic datasets right in the browser.
+
 ## Packages
 
 | Package                                             | Description                                  |
