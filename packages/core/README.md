@@ -7,7 +7,7 @@ stays smooth while panning/zooming large datasets.
 
 This is the engine behind [`@event-timeline/react`](https://www.npmjs.com/package/@event-timeline/react).
 Use it directly to embed the timeline in any framework (or none). See
-[`docs/DESIGN.md`](https://github.com/kgorgoglione/event-timeline/blob/main/docs/DESIGN.md)
+[`docs/DESIGN.md`](https://github.com/KarlGorgoglione/event-timeline/blob/main/docs/DESIGN.md)
 for the architecture.
 
 ## Install
@@ -73,5 +73,5 @@ domain**, and all time↔screen math lives in a single Camera/scale module
 
 ## License
 
-[MIT](https://github.com/kgorgoglione/event-timeline/blob/main/LICENSE) ©
+[MIT](https://github.com/KarlGorgoglione/event-timeline/blob/main/LICENSE) ©
 Karl Gorgoglione

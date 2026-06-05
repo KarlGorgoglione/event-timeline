@@ -7,7 +7,7 @@ lanes) and **events** (directed arrows) and stays smooth at large scale.
 A thin binding: it owns the two `<canvas>` layers, the `ResizeObserver`, and the
 HTML tooltip overlay, and syncs props to the engine imperatively so React stays
 out of the render loop. See
-[`docs/DESIGN.md`](https://github.com/kgorgoglione/event-timeline/blob/main/docs/DESIGN.md)
+[`docs/DESIGN.md`](https://github.com/KarlGorgoglione/event-timeline/blob/main/docs/DESIGN.md)
 §12 for the contract.
 
 ## Install
@@ -66,5 +66,5 @@ StrictMode-safe and SSR-safe (the engine is created in an effect).
 
 ## License
 
-[MIT](https://github.com/kgorgoglione/event-timeline/blob/main/LICENSE) ©
+[MIT](https://github.com/KarlGorgoglione/event-timeline/blob/main/LICENSE) ©
 Karl Gorgoglione

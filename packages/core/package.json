@@ -4,14 +4,14 @@
   "description": "Framework-agnostic Canvas timeline engine (pure TypeScript).",
   "license": "MIT",
   "author": "Karl Gorgoglione",
-  "homepage": "https://github.com/kgorgoglione/event-timeline/tree/main/packages/core#readme",
+  "homepage": "https://github.com/KarlGorgoglione/event-timeline/tree/main/packages/core#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kgorgoglione/event-timeline.git",
+    "url": "git+https://github.com/KarlGorgoglione/event-timeline.git",
     "directory": "packages/core"
   },
   "bugs": {
-    "url": "https://github.com/kgorgoglione/event-timeline/issues"
+    "url": "https://github.com/KarlGorgoglione/event-timeline/issues"
   },
   "keywords": [
     "timeline",

@@ -8,7 +8,7 @@
   "author": "Karl Gorgoglione",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kgorgoglione/event-timeline.git"
+    "url": "git+https://github.com/KarlGorgoglione/event-timeline.git"
   },
   "packageManager": "pnpm@11.5.1",
   "engines": {
