@@ -1,7 +1,15 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "outDir": "dist"
+    "outDir": "dist",
+    // Type-check against core's source so `tsc --noEmit` resolves
+    // `@event-timeline/core` without requiring a prior build (core's package
+    // `exports` only points at `dist`). Mirrors the demo's paths-to-source
+    // setup. tsup auto-externalises the `dependencies` entry, so the built
+    // output still imports `@event-timeline/core` rather than inlining it.
+    "paths": {
+      "@event-timeline/core": ["../core/src/index.ts"]
+    }
   },
   "include": ["src", "vitest.setup.ts"]
 }
