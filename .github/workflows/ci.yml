@@ -9,6 +9,10 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege by default; the deploy job widens this to publish to Pages.
+permissions:
+  contents: read
+
 jobs:
   verify:
     runs-on: ubuntu-latest
@@ -66,3 +70,50 @@ jobs:
         # Local runs keep the strict 16ms budget (no tolerance).
         env:
           PERF_TOLERANCE_MS: '4'
+
+  # Build the Vite demo and publish it to GitHub Pages. Gated on `verify` so a
+  # broken demo never goes live, and limited to pushes on `main` (skips PRs and
+  # other branches — `needs` + `if` keep the deploy out of pull-request runs).
+  deploy-demo:
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write # publish to GitHub Pages
+      id-token: write # OIDC token the deploy-pages action verifies
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v6
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build demo
+        # Pages serves this project site under `/event-timeline/`, so prefix
+        # asset paths for this build only (local/e2e builds stay at root).
+        run: pnpm --filter demo run build
+        env:
+          DEMO_BASE: /event-timeline/
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload demo artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: examples/demo/dist
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
