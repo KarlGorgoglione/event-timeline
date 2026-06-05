@@ -1,5 +1,5 @@
 {
-  "name": "react-timeline",
+  "name": "event-timeline",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -8,7 +8,7 @@
   "author": "Karl Gorgoglione",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/kgorgoglione/react-timeline.git"
+    "url": "git+https://github.com/kgorgoglione/event-timeline.git"
   },
   "packageManager": "pnpm@11.5.1",
   "engines": {

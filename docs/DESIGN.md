@@ -133,7 +133,7 @@ A pnpm monorepo with a strict separation between the framework-agnostic engine
 and the React binding.
 
 ```
-react-timeline/
+event-timeline/
 ├─ packages/
 │  ├─ core/            @event-timeline/core   — pure TS, zero React, zero DOM-framework deps
 │  │  └─ src/

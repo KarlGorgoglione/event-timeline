@@ -229,7 +229,7 @@ export function App() {
         }}
       >
         <h1 style={{ margin: 0, font: '600 14px system-ui' }}>
-          react-timeline · demo
+          event-timeline · demo
         </h1>
         <button
           type="button"

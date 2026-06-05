@@ -1,4 +1,4 @@
-# react-timeline
+# event-timeline
 
 A Canvas-based, domain-agnostic timeline library for React. It renders
 **elements** (horizontal lanes) and **events** (directed arrows between lanes at
