@@ -1,5 +1,13 @@
 # @event-timeline/core
 
+## 0.1.1
+
+### Patch Changes
+
+- 6e66ed7: Validate the npm Trusted Publishing (OIDC) release pipeline end to end. No
+  functional or API changes — this is a maintenance release that exercises the
+  tokenless publish path.
+
 ## 0.1.0
 
 ### Minor Changes
