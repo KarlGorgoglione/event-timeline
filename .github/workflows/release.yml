@@ -64,7 +64,4 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          # Provenance disabled while debugging the first publish — it adds OIDC
-          # requirements that can themselves cause a 403. Re-enable once a plain
-          # publish succeeds.
-          # NPM_CONFIG_PROVENANCE: 'true'
+          NPM_CONFIG_PROVENANCE: 'true'
