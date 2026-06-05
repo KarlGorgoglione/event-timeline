@@ -6,6 +6,7 @@ import {
   type CSSProperties,
   type ForwardedRef,
   type PointerEvent as ReactPointerEvent,
+  type ReactNode,
   type Ref,
 } from 'react';
 import {
@@ -36,6 +37,8 @@ export interface TimelineProps<TData = unknown> {
   styleResolvers?: StyleResolvers<TData>;
   /** Label/tick text formatters (DESIGN.md §11, §12); memoize. */
   formatters?: Formatters<TData>;
+  /** Optional host renderer for tooltip content; defaults to label-only text. */
+  renderTooltip?: (hit: HitResult<TData>) => ReactNode;
   /** Class applied to the root container. */
   className?: string;
   /** Inline style merged over the default container style. */
@@ -156,7 +159,12 @@ function TimelineInner<TData>(
     >
       <canvas ref={baseRef} style={canvasStyle} />
       <canvas ref={overlayRef} style={canvasStyle} />
-      <Tooltip hit={hover} x={pointer.x} y={pointer.y} />
+      <Tooltip
+        hit={hover}
+        x={pointer.x}
+        y={pointer.y}
+        render={props.renderTooltip}
+      />
     </div>
   );
 }

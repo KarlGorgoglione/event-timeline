@@ -171,6 +171,28 @@ export function App() {
     [labelled],
   );
 
+  // Custom tooltip: events show their UTC date under the label (§9, §12). Stable
+  // so the Tooltip subtree isn't re-created each render.
+  const renderTooltip = useCallback((hit: HitResult<DemoDatum>) => {
+    switch (hit.kind) {
+      case 'event': {
+        const date = new Date(hit.event.time).toISOString().slice(0, 10);
+        const label =
+          hit.event.label ?? `${hit.event.sourceId} → ${hit.event.targetId}`;
+        return (
+          <span style={{ display: 'flex', flexDirection: 'column' }}>
+            <span>{label}</span>
+            <span style={{ opacity: 0.7 }}>{date}</span>
+          </span>
+        );
+      }
+      case 'element':
+        return hit.element.label;
+      case 'cluster':
+        return `${hit.count} events`;
+    }
+  }, []);
+
   // Memoized so the referential-stability contract holds (§12): a stable `data`
   // reference avoids a full setData on every render. The 10k set is built once;
   // the 50k set is built lazily the first time it is shown (§15 acceptance).
@@ -317,6 +339,7 @@ export function App() {
           options={options}
           styleResolvers={styleResolvers}
           formatters={formatters}
+          renderTooltip={renderTooltip}
           onHover={onHover}
           onSelectionChange={onSelectionChange}
           onViewportChange={onViewportChange}

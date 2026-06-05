@@ -7,7 +7,7 @@
 // hidden`. SSR-safe: renders nothing until a hover hit exists on the client.
 
 import { createPortal } from 'react-dom';
-import type { CSSProperties, ReactPortal } from 'react';
+import type { CSSProperties, ReactNode, ReactPortal } from 'react';
 import type { HitResult } from '@event-timeline/core';
 
 export interface TooltipProps<TData = unknown> {
@@ -16,6 +16,8 @@ export interface TooltipProps<TData = unknown> {
   /** Pointer position in client (viewport) pixels. */
   x: number;
   y: number;
+  /** Optional host renderer for tooltip content; falls back to the default text. */
+  render?: (hit: HitResult<TData>) => ReactNode;
 }
 
 /** Default tooltip text for a hit; host-customisable content arrives in Phase 6. */
@@ -47,6 +49,7 @@ export function Tooltip<TData>({
   hit,
   x,
   y,
+  render,
 }: TooltipProps<TData>): ReactPortal | null {
   if (hit === null || typeof document === 'undefined') return null;
   return createPortal(
@@ -55,7 +58,7 @@ export function Tooltip<TData>({
       role="tooltip"
       style={{ ...tooltipStyle, left: x + 12, top: y + 12 }}
     >
-      {defaultContent(hit)}
+      {render ? render(hit) : defaultContent(hit)}
     </div>,
     document.body,
   );

@@ -96,14 +96,22 @@ const rowCenter = (row: number) =>
   metrics.rowHeight / 2;
 
 describe('buildArrows geometry (§1)', () => {
-  it('draws a downward arrowhead when the target is below the source', () => {
+  // The arrowhead lands at the near edge of the target line's thickness (§1):
+  // its anchor sits one arrowhead-size and half the target line width back from
+  // the row centre, so the tip stops on the line edge instead of piercing it.
+  const arrowheadAnchorY = (row: number, dir: number) =>
+    rowCenter(row) -
+    dir * (defaultTheme.element.lineWidth / 2) -
+    dir * defaultTheme.event.arrowheadSize;
+
+  it('draws a downward arrowhead landing at the target line edge', () => {
     const r = buildArrows(
       ctxFor([ev({ sourceId: 'r0', targetId: 'r2', time: 100 })], fullBand),
     );
     expect(r.arrowheads).toHaveLength(1);
     const head = r.arrowheads[0]!.items[0]!;
     expect(head.angle).toBeCloseTo(Math.PI / 2);
-    expect(head.y).toBeCloseTo(rowCenter(2));
+    expect(head.y).toBeCloseTo(arrowheadAnchorY(2, 1));
   });
 
   it('draws an upward arrowhead when the target is above the source', () => {
@@ -111,6 +119,57 @@ describe('buildArrows geometry (§1)', () => {
       ctxFor([ev({ sourceId: 'r2', targetId: 'r0', time: 100 })], fullBand),
     );
     expect(r.arrowheads[0]!.items[0]!.angle).toBeCloseTo(-Math.PI / 2);
+  });
+
+  it('draws source and target dots and ends the riser at the arrowhead base', () => {
+    const ctx = ctxFor(
+      [ev({ sourceId: 'r0', targetId: 'r2', time: 100 })],
+      fullBand,
+    );
+    const r = buildArrows(ctx);
+    const x = ctx.camera.timeToScreenX(100);
+    // Two dots in one batch: source on its line, target on the target line.
+    expect(r.nodes[0]!.items).toEqual([
+      { x, y: rowCenter(0) },
+      { x, y: rowCenter(2) },
+    ]);
+    // Riser starts at the source line and stops at the arrowhead base (the line
+    // is not pierced).
+    const seg = r.lines[0]!.segments[0]!;
+    expect(seg.y1).toBeCloseTo(rowCenter(0));
+    const last = r.lines[0]!.segments.at(-1)!;
+    expect(last.y2).toBeCloseTo(arrowheadAnchorY(2, 1));
+  });
+
+  it('hops over an intermediary element line the riser crosses (§16)', () => {
+    const ctx = ctxFor(
+      [ev({ sourceId: 'r0', targetId: 'r4', time: 100 })],
+      fullBand,
+    );
+    // r2 sits between r0 and r4 and its line spans the event time -> hop.
+    ctx.data.getExtent = (id) =>
+      id === 'r2' ? { minTime: 0, maxTime: 200 } : undefined;
+    const r = buildArrows(ctx);
+    const segs = r.lines[0]!.segments;
+    // A straight riser is a single segment; a hop adds an arc polyline.
+    expect(segs.length).toBeGreaterThan(1);
+    const x = ctx.camera.timeToScreenX(100);
+    const bulged = segs.some(
+      (s) => s.x2 > x + 0.5 && Math.abs(s.y2 - rowCenter(2)) < 6,
+    );
+    expect(bulged).toBe(true);
+  });
+
+  it('keeps the riser straight when no intermediary line is crossed', () => {
+    const ctx = ctxFor(
+      [ev({ sourceId: 'r0', targetId: 'r4', time: 100 })],
+      fullBand,
+    );
+    // r2's line does not span the event time -> no crossing, no hop.
+    ctx.data.getExtent = (id) =>
+      id === 'r2' ? { minTime: 500, maxTime: 600 } : undefined;
+    const r = buildArrows(ctx);
+    expect(r.lines[0]!.segments).toHaveLength(1);
   });
 
   it('places the riser x at timeToScreenX(time) and the source node on it', () => {

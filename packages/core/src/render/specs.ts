@@ -89,10 +89,14 @@ export type HitTarget<TData = unknown> =
   | {
       kind: 'event';
       event: TimelineEvent<TData>;
-      /** Riser / self-loop segments. */
+      /** Riser / self-loop segments (with hop arcs over crossed lines, §16). */
       segments: SpecSegment[];
+      /** Arrowhead *anchor* (its base); the tip sits `arrowheadSize` beyond it. */
       arrowhead?: { x: number; y: number };
+      /** Source dot, on the source line. */
       node?: { x: number; y: number };
+      /** Target dot, on the target line at the landing point (§1). */
+      targetNode?: { x: number; y: number };
       width: number;
       arrowheadSize: number;
     }

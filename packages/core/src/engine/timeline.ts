@@ -29,7 +29,7 @@ import {
   scaleFontToDevice,
   snapDevice,
 } from '../render/device';
-import { buildElementLines } from '../render/elementLines';
+import { buildElementLines, markerReserveLeftPx } from '../render/elementLines';
 import { IconCache, isIconUrl } from '../render/iconCache';
 import { visibleRowBand } from '../render/rowBand';
 import {
@@ -50,6 +50,7 @@ import {
   Camera,
   computeZoomBounds,
   fit,
+  type FitInset,
   type RowMetrics,
   type Viewport,
 } from '../scale/camera';
@@ -371,7 +372,13 @@ export class TimelineEngine<TData = unknown> {
   }
 
   fit(): void {
-    fit(this.camera, this.store.getDataExtent(), this.viewport, this.now());
+    fit(
+      this.camera,
+      this.store.getDataExtent(),
+      this.viewport,
+      this.now(),
+      this.fitInset(),
+    );
     this.hasFitted = true;
     this.scheduler.markDirty('base');
     this.emitViewportChange();
@@ -464,7 +471,20 @@ export class TimelineEngine<TData = unknown> {
       this.store.getDataExtent(),
       this.viewport,
       this.now(),
+      this.fitInset(),
     );
+  }
+
+  /**
+   * Edge space reserved when fitting (§3): a left gutter so the leftmost line's
+   * start marker (icon + label, §1) clears the viewport edge instead of being
+   * clipped. Derived from the theme so host themes scale it. With no elements
+   * there are no markers, so nothing is reserved (the empty-state window stays
+   * centred on `now`, §3.1).
+   */
+  private fitInset(): FitInset {
+    if (this.store.getElements().length === 0) return {};
+    return { left: markerReserveLeftPx(this.theme) };
   }
 
   /**
@@ -511,7 +531,7 @@ export class TimelineEngine<TData = unknown> {
       this.fit();
       return;
     }
-    fit(this.camera, null, this.viewport, this.now());
+    fit(this.camera, null, this.viewport, this.now(), this.fitInset());
     this.scheduler.markDirty('base');
     this.emitViewportChange();
   }
@@ -778,18 +798,47 @@ export class TimelineEngine<TData = unknown> {
 
     const dpr = this.dpr;
     const hoveredKey = this.hovered !== null ? hitId(this.hovered) : null;
+    // Highlighting an element also lights its connected events (§9): collect the
+    // hovered/selected *element* ids so an arrow touching one is highlighted too.
+    const hoveredElementId =
+      this.hovered?.kind === 'element' ? this.hovered.element.id : null;
+    const selectedElementIds = elementIdsFromKeys(this.selectedIds);
 
     for (const target of this.frameTargets) {
-      const key = targetKey(target);
-      const selected = this.selectedIds.has(key);
-      const hovered = key === hoveredKey;
-      if (!selected && !hovered) continue;
-      // Hover wins the colour when an item is both hovered and selected.
-      const color = hovered ? this.theme.hoverColor : this.theme.selectionColor;
-      this.drawHighlight(target, color, dpr);
+      const color = this.highlightColorFor(
+        target,
+        hoveredKey,
+        hoveredElementId,
+        selectedElementIds,
+      );
+      if (color !== null) this.drawHighlight(target, color, dpr);
     }
 
     this.renderer.endFrame('overlay');
+  }
+
+  /**
+   * Overlay colour for a target, or null when it should not highlight. A target
+   * highlights when it is itself hovered/selected, or — for an event/cluster —
+   * when one of its endpoints is a hovered/selected element (§9). Hover wins the
+   * colour over selection.
+   */
+  private highlightColorFor(
+    target: HitTarget<TData>,
+    hoveredKey: string | null,
+    hoveredElementId: string | null,
+    selectedElementIds: ReadonlySet<string>,
+  ): string | null {
+    const key = targetKey(target);
+    const hovered =
+      key === hoveredKey ||
+      (hoveredElementId !== null && touchesElement(target, hoveredElementId));
+    if (hovered) return this.theme.hoverColor;
+    const selected =
+      this.selectedIds.has(key) ||
+      touchesAnyElement(target, selectedElementIds);
+    if (selected) return this.theme.selectionColor;
+    return null;
   }
 
   /** Run the coalesced hit-test for the latest cursor position and emit on change. */
@@ -852,14 +901,13 @@ export class TimelineEngine<TData = unknown> {
         dpr,
       ),
     );
-    if (target.node !== undefined) {
+    const dots = [target.node, target.targetNode].filter(
+      (n): n is { x: number; y: number } => n !== undefined,
+    );
+    if (dots.length > 0) {
       this.renderer.drawNodes(
         snapNodes(
-          {
-            color,
-            radius: this.theme.event.nodeRadius + 1,
-            items: [target.node],
-          },
+          { color, radius: this.theme.event.nodeRadius + 1, items: dots },
           dpr,
         ),
       );
@@ -901,6 +949,42 @@ function targetKey(target: HitTarget): string {
     case 'cluster':
       return `cluster:${target.events.map((e) => e.id).join(',')}`;
   }
+}
+
+const ELEMENT_KEY_PREFIX = 'element:';
+
+/** Element ids embedded in a set of selection keys (`element:<id>`). */
+function elementIdsFromKeys(keys: ReadonlySet<string>): Set<string> {
+  const ids = new Set<string>();
+  for (const key of keys) {
+    if (key.startsWith(ELEMENT_KEY_PREFIX)) {
+      ids.add(key.slice(ELEMENT_KEY_PREFIX.length));
+    }
+  }
+  return ids;
+}
+
+/** Element ids an event/cluster target connects to; empty for an element target. */
+function targetElementIds(target: HitTarget): string[] {
+  switch (target.kind) {
+    case 'element':
+      return [];
+    case 'event':
+      return [target.event.sourceId, target.event.targetId];
+    case 'cluster':
+      return target.events.flatMap((e) => [e.sourceId, e.targetId]);
+  }
+}
+
+function touchesElement(target: HitTarget, elementId: string): boolean {
+  return targetElementIds(target).includes(elementId);
+}
+
+function touchesAnyElement(
+  target: HitTarget,
+  ids: ReadonlySet<string>,
+): boolean {
+  return ids.size > 0 && targetElementIds(target).some((id) => ids.has(id));
 }
 
 /** Recover the arrowhead direction from a target's last segment (y-down). */
