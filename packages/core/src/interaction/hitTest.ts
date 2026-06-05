@@ -70,6 +70,19 @@ export function hitTest<TData>(
       ) {
         distSq = 0;
       }
+      // The target dot sits on the target line, just past the arrowhead tip.
+      if (
+        target.targetNode !== undefined &&
+        inSquare(
+          x,
+          y,
+          target.targetNode.x,
+          target.targetNode.y,
+          target.arrowheadSize,
+        )
+      ) {
+        distSq = 0;
+      }
     } else if (
       inSquare(x, y, target.marker.x, target.marker.y, target.markerSize)
     ) {

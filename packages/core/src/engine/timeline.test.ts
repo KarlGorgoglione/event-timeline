@@ -107,11 +107,12 @@ describe('TimelineEngine empty-state framing (§3.1)', () => {
     };
     engine.setData(data);
 
-    // Auto-fit frames the data extent exactly: left edge = min, right edge = max.
+    // Auto-fit frames the data extent, but reserves a left gutter for the start
+    // markers (§1): the data start lands just inside the left edge (so earlier
+    // time is visible before it), while the data end still sits at the right edge.
     const { timeRange } = engine.getViewport();
-    expect(timeRange[0]).toBeCloseTo(minTime, -3);
-    expect(timeRange[1]).toBeCloseTo(maxTime, -3);
-    expect(timeRange[1] - timeRange[0]).toBeCloseTo(maxTime - minTime, -3);
+    expect(timeRange[0]).toBeLessThan(minTime); // reserved marker space on the left
+    expect(timeRange[1]).toBeCloseTo(maxTime, -3); // right edge unchanged
     engine.dispose();
   });
 });
@@ -144,10 +145,12 @@ describe('TimelineEngine interactions (§9, §12)', () => {
     engine.dispose();
   });
 
-  it('keys selection by kind:id so a shared raw id never cross-highlights', () => {
-    // An element and an event deliberately share the raw id 'x'. Selecting one
-    // must highlight only that primitive (DESIGN.md §9). The overlay draws a node
-    // dot (`arc`) only for an event highlight, so it is a clean discriminator.
+  it('keys selection by kind:id: selecting an element never lights an unconnected event sharing its raw id', () => {
+    // Element 'x' and event 'x' deliberately share the raw id but are NOT
+    // connected: event 'x' runs p→q. Selecting element:x must light only x's own
+    // connected event ('seed'), never event:x via an id collision (DESIGN.md §9).
+    // Each event highlight draws its two node dots (two `arc` calls), so the arc
+    // count is an exact discriminator.
     const overlay: Record<string, number> = {};
     let queued: Array<() => void> = [];
     vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
@@ -170,10 +173,19 @@ describe('TimelineEngine interactions (§9, §12)', () => {
     engine.setData({
       elements: [
         { id: 'x', label: 'X' },
-        { id: 'b', label: 'B' },
+        { id: 'p', label: 'P' },
+        { id: 'q', label: 'Q' },
       ],
       events: [
-        { id: 'x', sourceId: 'x', targetId: 'b', time: Date.UTC(2026, 0, 1) },
+        // x's own connected event; gives x an extent so its line is drawn.
+        {
+          id: 'seed',
+          sourceId: 'x',
+          targetId: 'q',
+          time: Date.UTC(2026, 0, 1),
+        },
+        // Shares the raw id 'x' but connects p→q, not x.
+        { id: 'x', sourceId: 'p', targetId: 'q', time: Date.UTC(2026, 0, 3) },
       ],
     });
     flush(); // base frame builds this frame's hit targets
@@ -184,10 +196,55 @@ describe('TimelineEngine interactions (§9, §12)', () => {
       return overlay.arc ?? 0;
     };
 
-    engine.select(['element:x']); // element only → no event node dot
-    expect(overlayArcs()).toBe(0);
+    // Only 'seed' (touching x) lights up: its two node dots = exactly two arcs.
+    // event:x (p→q) is unconnected to x, so it is never cross-lit.
+    engine.select(['element:x']);
+    expect(overlayArcs()).toBe(2);
 
-    engine.select(['event:x']); // event only → node dot drawn
+    engine.dispose();
+  });
+
+  it("selecting an element also highlights that element's connected events (§9)", () => {
+    const overlay: Record<string, number> = {};
+    let queued: Array<() => void> = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      queued.push(cb);
+      return queued.length;
+    });
+    const flush = () => {
+      const run = queued;
+      queued = [];
+      for (const cb of run) cb();
+    };
+
+    const engine = new TimelineEngine(
+      makeRecordingCanvas(() => {}),
+      makeRecordingCanvas((name) => {
+        overlay[name] = (overlay[name] ?? 0) + 1;
+      }),
+    );
+    engine.resize(800, 400, 1);
+    engine.setData({
+      elements: [
+        { id: 'a', label: 'A' },
+        { id: 'b', label: 'B' },
+      ],
+      events: [
+        { id: 'e1', sourceId: 'a', targetId: 'b', time: Date.UTC(2026, 0, 1) },
+      ],
+    });
+    flush();
+
+    const overlayArcs = () => {
+      for (const k of Object.keys(overlay)) delete overlay[k];
+      flush();
+      return overlay.arc ?? 0;
+    };
+
+    // No selection → nothing highlighted.
+    expect(overlayArcs()).toBe(0);
+    // Selecting element 'a' lights its connected event e1 (its node dots draw).
+    engine.select(['element:a']);
     expect(overlayArcs()).toBeGreaterThan(0);
 
     engine.dispose();

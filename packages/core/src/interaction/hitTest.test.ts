@@ -107,6 +107,22 @@ describe('hitTest (§5, §9)', () => {
     if (hit?.kind === 'event') expect(hit.event.id).toBe('ev1');
   });
 
+  it('hits the target dot on the target line (event wins there)', () => {
+    const event: TimelineEvent = {
+      id: 'ev1',
+      sourceId: 'r0',
+      targetId: 'r2',
+      time: 200,
+    };
+    const grid = gridFor([event]);
+    // The landing dot sits on r2's line, just past the arrowhead tip; the riser
+    // stops short of the line, so only the target node can register the event
+    // here — proving it is hit-testable.
+    const hit = hitTest(grid, 200, rowCenter(2));
+    expect(hit?.kind).toBe('event');
+    if (hit?.kind === 'event') expect(hit.event.id).toBe('ev1');
+  });
+
   it('hits an element line away from any arrow', () => {
     const grid = gridFor([]);
     const hit = hitTest(grid, 300, rowCenter(1));

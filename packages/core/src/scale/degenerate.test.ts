@@ -63,4 +63,18 @@ describe('fit', () => {
     expect(camera.timeToScreenX(extent.minTime)).toBeCloseTo(0);
     expect(camera.timeToScreenX(extent.maxTime)).toBeCloseTo(viewport.cssWidth);
   });
+
+  it('reserves a left inset so the extent start clears the edge (§1)', () => {
+    const camera = new Camera(metrics);
+    const extent = { minTime: 0, maxTime: 100 * 86_400_000 };
+    const left = 120;
+    fit(camera, extent, viewport, NOW, { left });
+    // Extent start sits at the inset, not the edge; extent end at usable width.
+    expect(camera.timeToScreenX(extent.minTime)).toBeCloseTo(left);
+    expect(camera.timeToScreenX(extent.maxTime)).toBeCloseTo(viewport.cssWidth);
+    // The fitted zoom must be permitted by the bounds, so it survives a re-clamp.
+    const bounds = computeZoomBounds(extent, viewport, NOW, { left });
+    camera.setPxPerMs(camera.state.pxPerMs, bounds);
+    expect(camera.timeToScreenX(extent.minTime)).toBeCloseTo(left);
+  });
 });

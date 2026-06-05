@@ -44,6 +44,25 @@ export interface ZoomBounds {
   maxPxPerMs: number;
 }
 
+/**
+ * CSS px reserved at the viewport edges when fitting, so content drawn *outside*
+ * the data extent stays on-screen — chiefly the element start markers that sit
+ * left of each line's first event (§1). The engine derives these from the theme;
+ * the Camera just treats them as a usable-width reduction (it stays the single
+ * source of coordinate truth, §3).
+ */
+export interface FitInset {
+  left?: number;
+  right?: number;
+}
+
+/** Usable horizontal span for fitting, after reserving the edge insets. */
+function usableFitWidth(viewport: Viewport, inset: FitInset): number {
+  const left = inset.left ?? 0;
+  const right = inset.right ?? 0;
+  return Math.max(1, viewport.cssWidth - left - right);
+}
+
 const DEFAULT_STATE: CameraState = {
   originTime: 0,
   scrollY: 0,
@@ -167,31 +186,41 @@ export function computeZoomBounds(
   extent: Extent | null,
   viewport: Viewport,
   now: Time,
+  inset: FitInset = {},
 ): ZoomBounds {
   const eff = effectiveExtent(extent, now);
   const span = eff.maxTime - eff.minTime;
   const maxPxPerMs = MAX_DAY_WIDTH_PX / DAY_MS;
-  const minPxPerMs = viewport.cssWidth / span;
+  // The zoom-out limit must permit the inset-aware fit level (below), so it is
+  // derived from the usable width, not the full viewport — otherwise a later
+  // setPxPerMs would clamp the fitted zoom back up and undo the inset.
+  const minPxPerMs = usableFitWidth(viewport, inset) / span;
   return { minPxPerMs, maxPxPerMs };
 }
 
 /**
  * Frame the data extent to the viewport: `pxPerMs` spans the (degenerate-safe)
- * extent across the width, `originTime` sits at the extent start, `scrollY`
- * resets. `now` resolves empty/single-instant extents (§3.1).
+ * extent across the *usable* width (the viewport minus any `inset`), the extent
+ * start sits at the left inset, and `scrollY` resets. Reserving a left inset
+ * keeps each line's start marker (icon + label, §1) on-screen instead of clipped
+ * at the edge. `now` resolves empty/single-instant extents (§3.1).
  */
 export function fit(
   camera: Camera,
   extent: Extent | null,
   viewport: Viewport,
   now: Time,
+  inset: FitInset = {},
 ): void {
   const eff = effectiveExtent(extent, now);
   const span = eff.maxTime - eff.minTime;
-  camera.setOriginTime(eff.minTime);
   camera.setPxPerMs(
-    viewport.cssWidth / span,
-    computeZoomBounds(extent, viewport, now),
+    usableFitWidth(viewport, inset) / span,
+    computeZoomBounds(extent, viewport, now, inset),
   );
+  // Place the extent start at the left inset using the *clamped* pxPerMs:
+  // originTime is the time at screen x=0, so back off the inset's worth of time.
+  const left = inset.left ?? 0;
+  camera.setOriginTime(eff.minTime - left / camera.state.pxPerMs);
   camera.setScrollY(0);
 }

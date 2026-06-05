@@ -1,8 +1,9 @@
 import { createRef } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { VERSION } from '@event-timeline/core';
+import { VERSION, type HitResult } from '@event-timeline/core';
 import { Timeline, type TimelineData, type TimelineHandle } from './index';
+import { Tooltip } from './Tooltip';
 
 const data: TimelineData = {
   elements: [
@@ -64,5 +65,41 @@ describe('<Timeline />', () => {
     ]);
 
     expect(changes).toEqual([{ added: 1, removed: 0, updated: 0 }]);
+  });
+});
+
+describe('<Tooltip /> (§9, §12)', () => {
+  const eventHit: HitResult = {
+    kind: 'event',
+    event: {
+      id: 'e1',
+      sourceId: 'a',
+      targetId: 'b',
+      time: Date.UTC(2026, 2, 4),
+      label: '$5,000',
+    },
+  };
+
+  it('uses the render prop for content when provided', () => {
+    render(
+      <Tooltip
+        hit={eventHit}
+        x={0}
+        y={0}
+        render={(h) => (
+          <span data-testid="custom">
+            {h.kind === 'event'
+              ? new Date(h.event.time).toISOString().slice(0, 10)
+              : ''}
+          </span>
+        )}
+      />,
+    );
+    expect(screen.getByTestId('custom')).toHaveTextContent('2026-03-04');
+  });
+
+  it('falls back to the default label content without a render prop', () => {
+    render(<Tooltip hit={eventHit} x={0} y={0} />);
+    expect(screen.getByTestId('timeline-tooltip')).toHaveTextContent('$5,000');
   });
 });

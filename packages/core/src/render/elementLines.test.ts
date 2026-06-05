@@ -4,7 +4,7 @@ import { computeRowLayout } from '../layout/positions';
 import type { Extent } from '../model/extent';
 import type { TimelineElement } from '../model/types';
 import { Camera, type RowMetrics, type Viewport } from '../scale/camera';
-import { buildElementLines } from './elementLines';
+import { buildElementLines, markerReserveLeftPx } from './elementLines';
 import { bySourceTargetColumn } from '../cluster/strategies';
 import { overlayStyle, type ElementStyleResolver } from './resolveStyle';
 import type { BuildContext, DataAccess, RowBand, ResolveIcon } from './specs';
@@ -73,15 +73,20 @@ const elementLabel = (
 ) => r.labels.find((b) => b.font === font)?.items[0];
 
 describe('buildElementLines label anchoring (§1)', () => {
-  it('anchors the label just before the line start when on-screen', () => {
+  it('right-aligns the label just left of the line start when on-screen', () => {
     const r = buildElementLines(
       ctxFor(
         [{ id: 'a', label: 'A' }],
         new Map([['a', { minTime: 100, maxTime: 500 }]]),
       ),
     );
-    // lineStart 100, lead pad 6 -> anchor 94 (>= labelPadding, not stuck).
-    expect(elementLabel(r)?.x).toBeCloseTo(94);
+    // lineStart 100, lead pad 12 -> x1 88; no icon -> label right edge 88-8 = 80.
+    // Right-aligned so the text grows leftward and never overflows onto the line.
+    const batch = r.labels.find(
+      (b) => b.font === defaultTheme.element.labelFont,
+    );
+    expect(batch?.align).toBe('right');
+    expect(batch?.items[0]?.x).toBeCloseTo(80);
   });
 
   it('sticks the label to the left edge when the line start scrolled off-screen', () => {
@@ -91,8 +96,13 @@ describe('buildElementLines label anchoring (§1)', () => {
         new Map([['a', { minTime: -1000, maxTime: 1000 }]]),
       ),
     );
-    // desiredX (-1006) < labelPadding and the line still reaches the viewport.
-    expect(elementLabel(r)?.x).toBeCloseTo(defaultTheme.labelPadding);
+    // Line start is far off-screen but the line still reaches the viewport, so
+    // the label pins left-aligned at labelPadding to stay readable.
+    const batch = r.labels.find(
+      (b) => b.font === defaultTheme.element.labelFont,
+    );
+    expect(batch?.align).toBe('left');
+    expect(batch?.items[0]?.x).toBeCloseTo(defaultTheme.labelPadding);
   });
 
   it('culls the row (no line, no label) when the line is fully off the left edge', () => {
@@ -147,7 +157,7 @@ describe('buildElementLines icons (§1, §11)', () => {
   const extents = new Map([['a', { minTime: 100, maxTime: 500 }]]);
   const iconSize = defaultTheme.element.iconSize;
 
-  it('emits an image icon and shifts the label past the icon slot', () => {
+  it('emits a centered image icon stacked over the label', () => {
     const image = {} as HTMLImageElement;
     const r = buildElementLines(
       ctxFor([{ id: 'a', label: 'A', icon: image }], extents, {
@@ -156,8 +166,10 @@ describe('buildElementLines icons (§1, §11)', () => {
     );
     expect(r.icons.items).toHaveLength(1);
     expect(r.icons.items[0]!.image).toBe(image);
-    // anchor 94 + iconSize 16 + gap 4 = 114.
-    expect(elementLabel(r)?.x).toBeCloseTo(94 + iconSize + 4);
+    // x1 88; with an icon, markerCenterX = 88 - gap 8 - iconSize/2 8 = 72.
+    // Icon is centered on that x; the label sits directly beneath, also centered.
+    expect(r.icons.items[0]!.x).toBeCloseTo(72 - iconSize / 2);
+    expect(elementLabel(r)?.x).toBeCloseTo(72);
   });
 
   it('emits an emoji icon as text', () => {
@@ -178,8 +190,19 @@ describe('buildElementLines icons (§1, §11)', () => {
       }),
     );
     expect(r.icons.items).toHaveLength(0);
-    // Label still shifted so it will not jump when the image loads.
-    expect(elementLabel(r)?.x).toBeCloseTo(94 + iconSize + 4);
+    // Marker still reserves the icon slot, so the label stays centered at 72 and
+    // will not jump when the image loads.
+    expect(elementLabel(r)?.x).toBeCloseTo(72);
+  });
+});
+
+describe('markerReserveLeftPx (§1 fit reserve)', () => {
+  it('reserves room for the padding, marker content, gap and lead pad', () => {
+    // Positive, and strictly larger than the lead gap alone — it must cover the
+    // whole start-marker block so `fit` does not clip it at the left edge.
+    expect(markerReserveLeftPx(defaultTheme)).toBeGreaterThan(
+      defaultTheme.labelPadding + defaultTheme.element.iconSize,
+    );
   });
 });
 

@@ -9,6 +9,7 @@
 //
 // Pure: works in CSS pixels and returns specs; the engine snaps to device px.
 
+import type { Theme } from '../model/types';
 import { labelBatch, lineBatch } from './batch';
 import type {
   BuildContext,
@@ -18,10 +19,40 @@ import type {
   LineSpec,
 } from './specs';
 
-/** A few CSS px of line drawn before an element's first event (§1). */
-export const LINE_LEAD_PAD_PX = 6;
-/** Gap between the element icon and its label text. */
-const ICON_GAP_PX = 4;
+/** CSS px of line drawn before an element's first event — the lead gap (§1). */
+export const LINE_LEAD_PAD_PX = 12;
+/** Gap between the start marker (icon/label block) and the line's left end. */
+const MARKER_GAP_PX = 8;
+/** Vertical gap between the stacked icon and the label beneath it. */
+const STACK_GAP_PX = 2;
+/** Fallback label line height when a font's px size can't be parsed. */
+const FALLBACK_LABEL_PX = 12;
+
+/**
+ * Heuristic label-width budget (CSS px) used only to reserve fit space. The pure
+ * builder never measures text (it has no canvas), so `fit` can't know the real
+ * label width; this is a reasonable upper bound for typical short labels. Wider
+ * labels still render fine — they may just need a manual pan after the initial fit.
+ */
+const FIT_LABEL_BUDGET_PX = 96;
+
+/**
+ * CSS px to reserve left of the leftmost line so its start marker (icon + label,
+ * §1) isn't clipped by `fit`. Mirrors the marker geometry below: the line's lead
+ * gap, the marker gap, the marker content width, and the left padding.
+ */
+export function markerReserveLeftPx(theme: Theme): number {
+  const markerContentW = Math.max(theme.element.iconSize, FIT_LABEL_BUDGET_PX);
+  return theme.labelPadding + markerContentW + MARKER_GAP_PX + LINE_LEAD_PAD_PX;
+}
+
+// Extract the leading px size from a CSS font shorthand (e.g. "12px Inter").
+// Only px-sized fonts are supported (the theme uses them); pt/em/% fall back to
+// FALLBACK_LABEL_PX, which only affects vertical stack centering, never layout.
+function fontPx(font: string): number {
+  const match = /(\d+(?:\.\d+)?)px/.exec(font);
+  return match ? Number(match[1]) : FALLBACK_LABEL_PX;
+}
 
 export interface ElementLinesResult<TData = unknown> {
   lines: LineSpec[];
@@ -87,44 +118,72 @@ export function buildElementLines<TData>(
       });
     }
 
-    // Label + icon anchor. Sticky-left: when the start scrolled past the edge
-    // but the line is still visible, pin to labelPadding (§1).
-    const desiredX = lineStartX - LINE_LEAD_PAD_PX;
-    const stuck = desiredX < theme.labelPadding && lineEndX > 0;
-    const anchorX = stuck ? theme.labelPadding : desiredX;
+    // Start marker (§1): a block to the LEFT of the line's left end. With an
+    // icon it's the icon stacked over a centred label; without one it's the
+    // label alone, right-aligned so it never spills onto the line. Sticky-left:
+    // when the start scrolls past the edge but the line is still visible, pin
+    // the marker so it clears `labelPadding` and stays readable.
+    const iconSize = style.iconSize;
+    const icon = element?.icon;
+    const text = element ? ctx.formatElementLabel(element) : id;
+    const labelPx = fontPx(style.labelFont);
 
-    let textX = anchorX;
-    if (element?.icon !== undefined) {
-      const iconSize = style.iconSize;
-      const resolved = resolveIcon(element.icon);
+    if (icon !== undefined) {
+      const markerHalfW = iconSize / 2;
+      const markerCenterX = Math.max(
+        x1 - MARKER_GAP_PX - markerHalfW,
+        theme.labelPadding + markerHalfW,
+      );
+      // Centre the icon+label stack vertically on the row centre.
+      const totalH = iconSize + STACK_GAP_PX + labelPx;
+      const top = rowCenterY - totalH / 2;
+      const iconCenterY = top + iconSize / 2;
+      const labelY = top + iconSize + STACK_GAP_PX + labelPx / 2;
+      const resolved = resolveIcon(icon);
       if (resolved.kind === 'image') {
         icons.items.push({
-          x: anchorX,
-          y: rowCenterY - iconSize / 2,
+          x: markerCenterX - iconSize / 2,
+          y: top,
           size: iconSize,
           image: resolved.image,
         });
       } else if (resolved.kind === 'text') {
-        // Emoji / glyph icon drawn as text sized to the icon slot, tinted with
-        // the element's resolved label colour for consistency.
+        // Emoji / glyph icon drawn as centred text sized to the icon slot,
+        // tinted with the element's resolved label colour for consistency.
         const iconFont = `${iconSize}px sans-serif`;
-        labelBatch(labels, style.labelColor, iconFont).items.push({
-          x: anchorX,
-          y: rowCenterY,
+        labelBatch(labels, style.labelColor, iconFont, 'center').items.push({
+          x: markerCenterX,
+          y: iconCenterY,
           text: resolved.text,
         });
       }
-      // Reserve the icon slot even while a URL icon is still loading ('none'),
-      // so the label does not jump sideways when the image arrives.
-      textX = anchorX + iconSize + ICON_GAP_PX;
+      labelBatch(
+        labels,
+        style.labelColor,
+        style.labelFont,
+        'center',
+      ).items.push({ x: markerCenterX, y: labelY, text });
+    } else {
+      // No icon: right-align the label so its right edge sits a gap left of the
+      // line start — it can never overflow onto the line. When the line start
+      // scrolls off-screen, fall back to a left-anchored sticky label.
+      const labelRightX = x1 - MARKER_GAP_PX;
+      if (labelRightX >= theme.labelPadding) {
+        labelBatch(
+          labels,
+          style.labelColor,
+          style.labelFont,
+          'right',
+        ).items.push({ x: labelRightX, y: rowCenterY, text });
+      } else {
+        labelBatch(
+          labels,
+          style.labelColor,
+          style.labelFont,
+          'left',
+        ).items.push({ x: theme.labelPadding, y: rowCenterY, text });
+      }
     }
-
-    const text = element ? ctx.formatElementLabel(element) : id;
-    labelBatch(labels, style.labelColor, style.labelFont).items.push({
-      x: textX,
-      y: rowCenterY,
-      text,
-    });
   }
 
   return {

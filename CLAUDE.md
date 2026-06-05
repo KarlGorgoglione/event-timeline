@@ -126,6 +126,31 @@ Run from the repo root (pnpm workspace; Node ≥22 required, pinned in `.nvmrc`)
 **Releases** use Changesets: `pnpm changeset` to add one, `pnpm release` to
 publish. The `demo` package is private and ignored by Changesets.
 
+## Branching & releases
+
+`main` is the trunk and the published branch — keep it green and releasable.
+
+- **Feature work goes on a branch off `main`**, never directly on `main`:
+  `git switch -c <type>/<short-name> main` (e.g. `feat/element-positioning`,
+  `fix/cluster-hit-test`). Open a PR into `main`; CI runs on every PR
+  (`pull_request`) and must pass before merge.
+- **Add a changeset for every user-facing change**: `pnpm changeset`, pick the
+  package(s) and bump type (`patch`/`minor` — stay pre-`1.0.0` until we
+  deliberately cut v1), and commit the generated `.changeset/*.md` with the
+  code. Internal-only changes (refactors, CI, docs) need none — skip it or use
+  `pnpm changeset add --empty`.
+- **Merging a PR into `main` does not publish.** The Changesets GitHub Action
+  (`.github/workflows/release.yml`) keeps a single open **"Version Packages"**
+  PR that accumulates all pending changesets (applying the version bumps +
+  CHANGELOG). Publishing to npm happens only when **that** PR is merged — which
+  runs `pnpm build && changeset publish`. So the release is a deliberate,
+  separate merge, decoupled from feature merges.
+- **Never branch off or hand-edit `changeset-release/main`** — it is the bot's
+  auto-generated, force-pushed release branch.
+- Both packages publish under the `@event-timeline` npm scope with
+  `publishConfig.access: public`; the workflow needs the repo `NPM_TOKEN` secret
+  and "Allow GitHub Actions to create and approve pull requests" enabled.
+
 ## Architecture & boundaries
 
 Two published packages plus a private demo (`pnpm-workspace.yaml`):

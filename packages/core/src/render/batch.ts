@@ -53,12 +53,15 @@ export function labelBatch(
   map: Map<string, LabelSpec>,
   color: string,
   font: string,
+  align: LabelSpec['align'] = 'left',
+  baseline: LabelSpec['baseline'] = 'middle',
 ): LabelSpec {
-  const key = `${color}|${font}`;
+  // Alignment is part of the key: centered marker labels (§1) and left-anchored
+  // event labels (§9) share a colour/font but must not land in the same path.
+  const key = `${color}|${font}|${align}|${baseline}`;
   let batch = map.get(key);
   if (batch === undefined) {
-    // Element, icon-emoji, and event labels all anchor left/middle (§1, §9).
-    batch = { color, font, baseline: 'middle', align: 'left', items: [] };
+    batch = { color, font, baseline, align, items: [] };
     map.set(key, batch);
   }
   return batch;

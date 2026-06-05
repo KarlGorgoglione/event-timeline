@@ -18,6 +18,7 @@
 import { clusterEvents } from '../cluster/cluster';
 import type { ClusterContext } from '../cluster/types';
 import { arrowheadBatch, labelBatch, lineBatch, nodeBatch } from './batch';
+import { buildRiserSegments } from './riser';
 import type {
   ArrowheadSpec,
   BuildContext,
@@ -38,6 +39,10 @@ const EVENT_LABEL_GAP_PX = 4;
 const HORIZONTAL_MARGIN_PX = 48;
 /** Extra radius a cluster marker gets over an ordinary source dot. */
 const CLUSTER_MARKER_BONUS_PX = 2;
+/** Radius of the semicircular hop a riser makes over a crossed line (§16). */
+const HOP_RADIUS_PX = 4;
+/** Skip hop computation beyond this row span (perf guard, §13); draw straight. */
+const MAX_HOP_SPAN_ROWS = 24;
 /** Pointing straight down / up in screen space (y-down); risers are vertical. */
 const ANGLE_DOWN = Math.PI / 2;
 const ANGLE_UP = -Math.PI / 2;
@@ -191,34 +196,83 @@ function addSingleArrow<TData>(
   }
 
   const ySource = camera.rowToScreenY(rows.sourceRow) + halfRow;
-  const yTarget = camera.rowToScreenY(rows.targetRow) + halfRow;
-  lineBatch(batches.lines, color, width).segments.push({
-    x1: x,
-    y1: ySource,
-    x2: x,
-    y2: yTarget,
-  });
-  nodeBatch(batches.nodes, color, radius).items.push({ x, y: ySource });
+  const yTargetCenter = camera.rowToScreenY(rows.targetRow) + halfRow;
+  const dir = yTargetCenter > ySource ? 1 : -1;
+
+  // Land at the near edge of the target line's thickness (§1): resolve the
+  // target element's line width so the arrowhead tip stops on the edge, and the
+  // riser ends at the arrowhead base rather than piercing the line. A dot then
+  // marks the landing point on the target line (mirrors the source dot).
+  const targetEl = ctx.data.getElementById(event.targetId);
+  const targetLineWidth = targetEl
+    ? ctx.resolveElementStyle(targetEl).lineWidth
+    : theme.element.lineWidth;
+  const nearEdge = yTargetCenter - dir * (targetLineWidth / 2);
+  const arrowheadAnchorY = nearEdge - dir * size;
+
+  // Hop over any intermediary element lines the riser crosses (§16).
+  const crossings = intermediaryCrossings(ctx, rows, event.time);
+  const segments = buildRiserSegments(
+    x,
+    ySource,
+    arrowheadAnchorY,
+    crossings,
+    HOP_RADIUS_PX,
+  );
+  lineBatch(batches.lines, color, width).segments.push(...segments);
+
+  const nodes = nodeBatch(batches.nodes, color, radius);
+  nodes.items.push({ x, y: ySource });
+  nodes.items.push({ x, y: yTargetCenter });
   arrowheadBatch(batches.arrowheads, color, size).items.push({
     x,
-    y: yTarget,
-    angle: yTarget > ySource ? ANGLE_DOWN : ANGLE_UP,
+    y: arrowheadAnchorY,
+    angle: dir > 0 ? ANGLE_DOWN : ANGLE_UP,
   });
   batches.targets.push({
     kind: 'event',
     event,
-    segments: [{ x1: x, y1: ySource, x2: x, y2: yTarget }],
-    arrowhead: { x, y: yTarget },
+    segments,
+    arrowhead: { x, y: arrowheadAnchorY },
     node: { x, y: ySource },
+    targetNode: { x, y: yTargetCenter },
     width,
     arrowheadSize: size,
   });
   if (labelText) {
     pushEventLabel(batches.labels, labelText, style, {
       x: x + width / 2 + EVENT_LABEL_GAP_PX,
-      y: (ySource + yTarget) / 2,
+      y: (ySource + yTargetCenter) / 2,
     });
   }
+}
+
+/**
+ * Screen-Y of each intermediary element line the riser crosses: rows strictly
+ * between source and target whose element line is present at the event's time.
+ * Bounded by {@link MAX_HOP_SPAN_ROWS} so a tall riser never scans the whole
+ * column (§13). The line's small lead pad is ignored — the extent test is close
+ * enough and the hop is cosmetic.
+ */
+function intermediaryCrossings<TData>(
+  ctx: BuildContext<TData>,
+  rows: { lo: number; hi: number },
+  time: number,
+): number[] {
+  if (rows.hi - rows.lo <= 1 || rows.hi - rows.lo > MAX_HOP_SPAN_ROWS)
+    return [];
+  const { rowLayout, data, camera, theme } = ctx;
+  const halfRow = theme.rowHeight / 2;
+  const ys: number[] = [];
+  for (let r = rows.lo + 1; r < rows.hi; r++) {
+    const id = rowLayout.orderedIds[r];
+    if (id === undefined) continue;
+    const extent = data.getExtent(id);
+    if (extent === undefined) continue;
+    if (time < extent.minTime || time > extent.maxTime) continue;
+    ys.push(camera.rowToScreenY(r) + halfRow);
+  }
+  return ys;
 }
 
 /**
