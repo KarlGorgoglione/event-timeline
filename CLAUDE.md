@@ -142,14 +142,24 @@ publish. The `demo` package is private and ignored by Changesets.
 - **Merging a PR into `main` does not publish.** The Changesets GitHub Action
   (`.github/workflows/release.yml`) keeps a single open **"Version Packages"**
   PR that accumulates all pending changesets (applying the version bumps +
-  CHANGELOG). Publishing to npm happens only when **that** PR is merged — which
-  runs `pnpm build && changeset publish`. So the release is a deliberate,
-  separate merge, decoupled from feature merges.
+  CHANGELOG). Publishing to npm happens only when **that** PR is merged — the
+  workflow then builds and runs `npm publish` for each package whose version
+  isn't on npm yet. So the release is a deliberate, separate merge, decoupled
+  from feature merges.
 - **Never branch off or hand-edit `changeset-release/main`** — it is the bot's
   auto-generated, force-pushed release branch.
-- Both packages publish under the `@event-timeline` npm scope with
-  `publishConfig.access: public`; the workflow needs the repo `NPM_TOKEN` secret
-  and "Allow GitHub Actions to create and approve pull requests" enabled.
+- **Publishing uses npm Trusted Publishing (OIDC) — there is no `NPM_TOKEN`.**
+  GitHub mints a short-lived OIDC credential per run (`id-token: write`), so
+  publishing only works from this workflow on `main`, not locally. Requirements:
+  each package has a **Trusted Publisher** configured on npmjs.com (owner
+  `KarlGorgoglione`, repo `event-timeline`, workflow `release.yml`); the workflow
+  upgrades npm to ≥ 11.5.1 (OIDC needs that + Node ≥ 22.14.0) and sets **no** npm
+  auth token anywhere (any token, even empty, makes npm skip OIDC). We publish
+  with `npm publish` rather than `changeset publish` because changesets shells
+  out to pnpm, and pnpm 11.x has an open OIDC bug (pnpm/pnpm#11513). Both packages
+  are public (`publishConfig.access: public`) with provenance attested from the
+  workflow's OIDC identity. The repo also needs "Allow GitHub Actions to create
+  and approve pull requests" enabled (for the Version Packages PR).
 
 ## Architecture & boundaries
 

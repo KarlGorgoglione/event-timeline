@@ -1,10 +1,23 @@
 name: Release
 
-# Publishes the packages via Changesets (DESIGN.md §15, Phase 8). On a push to
-# main, the Changesets action opens/updates a "Version Packages" PR that applies
-# pending changesets; merging that PR re-runs this workflow, which then publishes
-# to npm. Requires repo secret NPM_TOKEN with publish rights to the
-# @event-timeline scope (which must exist on npm before the first release).
+# Publishes the packages via Changesets (DESIGN.md §15, Phase 8) using npm
+# **Trusted Publishing (OIDC)** — no long-lived NPM_TOKEN. On a push to main the
+# Changesets action opens/updates a "Version Packages" PR that applies pending
+# changesets; merging that PR re-runs this workflow with no changesets left, so
+# the publish step runs and uploads to npm via a short-lived OIDC credential.
+#
+# Requirements (see https://docs.npmjs.com/trusted-publishers/):
+#   - `id-token: write` permission (below) so GitHub can mint the OIDC token.
+#   - npm CLI >= 11.5.1 and Node >= 22.14.0 (we upgrade npm explicitly).
+#   - A Trusted Publisher configured on npmjs.com for each package (owner
+#     KarlGorgoglione, repo event-timeline, workflow release.yml).
+#   - NO npm auth token anywhere (an empty/real token in the env or .npmrc makes
+#     npm try the token instead of OIDC), so we deliberately set none.
+#
+# We publish with `npm publish` rather than `changeset publish`: changesets shells
+# out to the detected package manager (pnpm here), and pnpm 11.x has an open OIDC
+# publish bug (pnpm/pnpm#11513, fix #11526 unreleased). npm's OIDC path is solid,
+# so Changesets handles only versioning and we do the upload with npm directly.
 on:
   push:
     branches: [main]
@@ -36,26 +49,43 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Authenticate npm for publishing. `changeset publish` shells out to
-      # `npm publish`, which only reads a token from an .npmrc — passing
-      # NPM_TOKEN as an env var alone does nothing. We write the resolved token
-      # into the runner's user-level .npmrc *after* install (so the install step
-      # is unaffected) rather than committing a token reference into the repo
-      # .npmrc, keeping local dev auth-free.
-      - name: Configure npm authentication
-        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
-        env:
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      # Trusted Publishing needs npm >= 11.5.1; Node 22 ships npm 10.x.
+      - name: Update npm for OIDC trusted publishing
+        run: npm install -g npm@latest
 
-      # Publishing requires a token that bypasses 2FA (account/org enforces 2FA
-      # for writes): use a classic *Automation* token or a granular token with
-      # "Packages and scopes: Read and write" for @event-timeline as NPM_TOKEN.
-      - name: Create release PR or publish
+      # When changesets are pending this opens/updates the "Version Packages" PR
+      # (and does not publish). When none are pending — i.e. that PR was just
+      # merged — it does nothing and the publish step below runs.
+      - name: Create Version Packages PR
+        id: changesets
         uses: changesets/action@v1
         with:
           version: pnpm run version-packages
-          publish: pnpm run release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-          NPM_CONFIG_PROVENANCE: 'true'
+
+      # Publish any package whose version isn't on npm yet, via OIDC (no token).
+      # Provenance is attested from this workflow's OIDC identity. Idempotent:
+      # already-published versions are skipped, so re-runs are safe.
+      - name: Publish to npm (OIDC trusted publishing)
+        if: steps.changesets.outputs.hasChangesets == 'false'
+        run: |
+          pnpm --filter "./packages/*" run build
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          published=0
+          for dir in packages/*/; do
+            name=$(node -p "require('./${dir}package.json').name")
+            version=$(node -p "require('./${dir}package.json').version")
+            private=$(node -p "require('./${dir}package.json').private === true")
+            if [ "$private" = "true" ]; then continue; fi
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version already published — skipping"
+              continue
+            fi
+            echo "Publishing $name@$version"
+            ( cd "$dir" && npm publish --provenance --access public )
+            git tag "$name@$version"
+            published=1
+          done
+          if [ "$published" = "1" ]; then git push --tags; fi

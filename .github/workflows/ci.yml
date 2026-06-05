@@ -58,3 +58,11 @@ jobs:
 
       - name: E2E tests
         run: pnpm test:e2e
+        # GitHub's shared runners are ~1ms noisier than the §13 base budget at
+        # 10k events (measured 16–17.5ms vs the 16ms gate), so the strict gate
+        # flakes here while passing locally. perf.spec.ts exposes PERF_TOLERANCE_MS
+        # for exactly this: widen the CI gate enough to absorb runner variance
+        # while still catching real regressions (a true regression is many ms).
+        # Local runs keep the strict 16ms budget (no tolerance).
+        env:
+          PERF_TOLERANCE_MS: '4'
