@@ -36,6 +36,17 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      # Authenticate npm for publishing. `changeset publish` shells out to
+      # `npm publish`, which only reads a token from an .npmrc — passing
+      # NPM_TOKEN as an env var alone does nothing. We write the resolved token
+      # into the runner's user-level .npmrc *after* install (so the install step
+      # is unaffected) rather than committing a token reference into the repo
+      # .npmrc, keeping local dev auth-free.
+      - name: Configure npm authentication
+        run: echo "//registry.npmjs.org/:_authToken=${NPM_TOKEN}" >> ~/.npmrc
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Create release PR or publish
         uses: changesets/action@v1
         with:
