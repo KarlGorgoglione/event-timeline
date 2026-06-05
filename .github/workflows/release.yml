@@ -47,6 +47,15 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
+      # TEMPORARY diagnostic: the first publish returns E403 from npm. Surface
+      # which account the token authenticates as and whether it can write to the
+      # @event-timeline scope, since changesets crashes before printing npm's
+      # own 403 detail. Remove once publishing succeeds.
+      - name: Diagnose npm publish permissions
+        run: |
+          echo "whoami:"; npm whoami || echo "  (whoami failed)"
+          echo "scope access:"; npm access list packages --scope=@event-timeline 2>&1 || true
+
       - name: Create release PR or publish
         uses: changesets/action@v1
         with:
