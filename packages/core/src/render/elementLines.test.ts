@@ -128,6 +128,31 @@ describe('buildElementLines label anchoring (§1)', () => {
     expect(r.labels).toHaveLength(0);
   });
 
+  it('clamps the drawn line and hit target to the viewport when zoomed in far (perf)', () => {
+    // At high zoom an element line spans its full extent in screen-x, which can
+    // be millions of px wide. Stroking that and rasterizing it into the hit grid
+    // cell-by-cell makes the framerate fall *as you zoom in*. The off-screen part
+    // is invisible and un-hittable, so the line/target must be clamped to the
+    // viewport (the horizontal line means clamping changes nothing visible).
+    const r = buildElementLines(
+      // pxPerMs 1, originTime 0 -> lineStartX = -1e6, lineEndX = 1e6.
+      ctxFor(
+        [{ id: 'a', label: 'A' }],
+        new Map([['a', { minTime: -1_000_000, maxTime: 1_000_000 }]]),
+      ),
+    );
+    const seg = r.lines[0]!.segments[0]!;
+    const bound = viewport.cssWidth + 1000; // generous: must be O(viewport), not 1e6
+    expect(seg.x1).toBeGreaterThan(-1000);
+    expect(seg.x2).toBeLessThan(bound);
+    const target = r.targets[0]!;
+    expect(target.kind).toBe('element');
+    if (target.kind === 'element') {
+      expect(target.x1).toBeGreaterThan(-1000);
+      expect(target.x2).toBeLessThan(bound);
+    }
+  });
+
   it('does not draw event-less elements (no extent)', () => {
     const r = buildElementLines(ctxFor([{ id: 'a', label: 'A' }], new Map()));
     expect(r.lines).toHaveLength(0);
