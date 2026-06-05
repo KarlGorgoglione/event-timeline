@@ -47,14 +47,22 @@ jobs:
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      # TEMPORARY diagnostic: the first publish returns E403 from npm. Surface
-      # which account the token authenticates as and whether it can write to the
-      # @event-timeline scope, since changesets crashes before printing npm's
-      # own 403 detail. Remove once publishing succeeds.
+      # TEMPORARY diagnostic: the first publish returns E403, but changesets
+      # crashes before printing npm's own 403 detail. Do a real, fully-logged
+      # publish here so we see npm's exact message (and it simply succeeds if the
+      # token's "Packages and scopes" permission covers @event-timeline). The
+      # changesets step below then becomes a no-op (versions already on npm).
+      # Remove this step once publishing succeeds.
       - name: Diagnose npm publish permissions
         run: |
           echo "whoami:"; npm whoami || echo "  (whoami failed)"
-          echo "scope access:"; npm access list packages --scope=@event-timeline 2>&1 || true
+          pnpm --filter "./packages/*" run build
+          for p in core react; do
+            echo "=== npm publish @event-timeline/$p ==="
+            ( cd "packages/$p" && npm publish --access public ) || echo "  (publish $p failed above)"
+          done
+        env:
+          NPM_CONFIG_PROVENANCE: 'true'
 
       - name: Create release PR or publish
         uses: changesets/action@v1
