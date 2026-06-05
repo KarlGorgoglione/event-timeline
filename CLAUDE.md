@@ -28,7 +28,7 @@ draw on an independent overlay layer (`hover`/`selectionColor` from the Theme)
 that re-renders whenever the base does, so highlights track content under
 pan/zoom. The builders emit identity-carrying `HitTarget` specs from the same
 geometry they already compute (DRY), feeding both the hit grid and the overlay.
-The `@timeline/react` binding adds a portal-based default `Tooltip` plus
+The `@event-timeline/react` binding adds a portal-based default `Tooltip` plus
 `onHover`/`onClick`/`onSelectionChange` callbacks and `select`/`zoomToRange` on
 the imperative handle; the demo gains a status bar, multi-select, and a 10k
 synthetic-dataset toggle.
@@ -130,19 +130,19 @@ publish. The `demo` package is private and ignored by Changesets.
 
 Two published packages plus a private demo (`pnpm-workspace.yaml`):
 
-- **`@timeline/core`** (`packages/core`) — the engine. Pure TypeScript, **zero
+- **`@event-timeline/core`** (`packages/core`) — the engine. Pure TypeScript, **zero
   React**, **never imports `CanvasRenderingContext2D`**. Its only runtime dep is
   `date-fns`, imported **per-function** (`import { addDays } from 'date-fns'`,
   never `import * as`) to stay tree-shakeable. It is handed a `<canvas>` and
   consumes pointer/wheel events directly; it attaches **no** `ResizeObserver` —
   size changes arrive via an imperative `engine.resize(cssW, cssH, dpr)` call
   the host drives.
-- **`@timeline/react`** (`packages/react`) — thin binding. Owns the canvas
+- **`@event-timeline/react`** (`packages/react`) — thin binding. Owns the canvas
   layers, the `ResizeObserver`, and the HTML tooltip overlay; syncs props →
   engine imperatively (keeps React out of the render loop). React is a **peer
   dependency** (`>=18`).
 - **`examples/demo`** — Vite + React playground. `vite.config.ts` aliases
-  `@timeline/*` to package **source** (not `dist`), so the demo hot-reloads into
+  `@event-timeline/*` to package **source** (not `dist`), so the demo hot-reloads into
   the library and runs on a fresh clone without a prior build.
 
 Both packages build with **tsup** (per-package `tsup.config.ts`), type-check

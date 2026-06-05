@@ -11,6 +11,7 @@ import {
   TimelineEngine,
   type ClusteringOptions,
   type Formatters,
+  type FrameStats,
   type HitResult,
   type LayoutStrategy,
   type LodOptions,
@@ -19,7 +20,7 @@ import {
   type Theme,
   type TimelineData,
   type TimelineEventMap,
-} from '@timeline/core';
+} from '@event-timeline/core';
 
 export interface TimelineOptions {
   onDiagnostic?: OnDiagnostic;
@@ -35,6 +36,8 @@ export interface TimelineOptions {
   clustering?: ClusteringOptions;
   /** Level-of-detail config, e.g. the event-label zoom threshold (DESIGN.md §6). */
   lod?: LodOptions;
+  /** Optional per-frame timing sink for benchmarking (DESIGN.md §13). */
+  onFrameStats?: (stats: FrameStats) => void;
 }
 
 export interface UseTimelineArgs<TData> {
@@ -88,6 +91,7 @@ export function useTimeline<TData>(
       multiSelect: options?.multiSelect,
       clustering: options?.clustering,
       lod: options?.lod,
+      onFrameStats: options?.onFrameStats,
       styleResolvers,
       formatters,
     });

@@ -1,0 +1,13 @@
+[
+  {
+    "name": "@event-timeline/core",
+    "path": "packages/core/dist/index.js",
+    "limit": "30 KB"
+  },
+  {
+    "name": "@event-timeline/react (marginal, excl. core + react)",
+    "path": "packages/react/dist/index.js",
+    "limit": "5 KB",
+    "ignore": ["@event-timeline/core", "react", "react-dom"]
+  }
+]

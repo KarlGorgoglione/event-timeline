@@ -1,4 +1,4 @@
-import type { TimelineData } from '@timeline/react';
+import type { TimelineData } from '@event-timeline/react';
 import type { DemoDatum } from './synthetic';
 
 // A small hand-built dataset exercising every Phase 2 feature: direction-aware

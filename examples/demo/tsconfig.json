@@ -3,8 +3,8 @@
   "compilerOptions": {
     "types": ["vite/client"],
     "paths": {
-      "@timeline/react": ["../../packages/react/src/index.ts"],
-      "@timeline/core": ["../../packages/core/src/index.ts"]
+      "@event-timeline/react": ["../../packages/react/src/index.ts"],
+      "@event-timeline/core": ["../../packages/core/src/index.ts"]
     }
   },
   "include": ["src"]

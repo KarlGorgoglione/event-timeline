@@ -2,7 +2,7 @@ import type {
   TimelineData,
   TimelineElement,
   TimelineEvent,
-} from '@timeline/react';
+} from '@event-timeline/react';
 
 // A deterministic synthetic dataset for exercising culling and clustering at
 // scale (DESIGN.md §15: Phase 2 culls 10k events; Phase 4 collapses 50k into

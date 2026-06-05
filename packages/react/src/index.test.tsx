@@ -1,7 +1,7 @@
 import { createRef } from 'react';
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import { VERSION } from '@timeline/core';
+import { VERSION } from '@event-timeline/core';
 import { Timeline, type TimelineData, type TimelineHandle } from './index';
 
 const data: TimelineData = {

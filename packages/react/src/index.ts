@@ -21,7 +21,8 @@ export type {
   ElementStyleResolver,
   EventStyleResolver,
   TickFormatter,
-} from '@timeline/core';
+  FrameStats,
+} from '@event-timeline/core';
 
 // Built-in layout strategies (DESIGN.md §7), so hosts can name one in `options`.
-export { byFirstEvent, barycenter, explicit } from '@timeline/core';
+export { byFirstEvent, barycenter, explicit } from '@event-timeline/core';

@@ -19,7 +19,7 @@ import {
   type TimelineElement,
   type TimelineEvent,
   type TimelineEventMap,
-} from '@timeline/core';
+} from '@event-timeline/core';
 import { useTimeline, type TimelineOptions } from './useTimeline';
 import { Tooltip } from './Tooltip';
 

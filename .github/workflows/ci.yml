@@ -36,6 +36,9 @@ jobs:
       - name: Build
         run: pnpm build
 
+      - name: Size budgets
+        run: pnpm size
+
       - name: Unit tests
         run: pnpm test
 

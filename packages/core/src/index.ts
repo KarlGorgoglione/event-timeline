@@ -1,4 +1,4 @@
-// Public entry point for @timeline/core.
+// Public entry point for @event-timeline/core.
 //
 // Phase 1 exposes the engine facade (TimelineEngine) plus the domain, layout,
 // theme, and diagnostic types hosts need. The internals — Camera, DataStore,
@@ -31,6 +31,7 @@ export type {
   LodOptions,
   StyleResolvers,
   Formatters,
+  FrameStats,
 } from './engine/timeline';
 export type { TimelineEventMap } from './engine/emitter';
 

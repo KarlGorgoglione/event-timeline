@@ -2,7 +2,7 @@ import type {
   TimelineData,
   TimelineElement,
   TimelineEvent,
-} from '@timeline/react';
+} from '@event-timeline/react';
 import type { AmlPattern, DemoDatum } from './synthetic';
 
 // A deterministic client/counterparty transaction-monitoring dataset (~100

@@ -87,6 +87,18 @@ export interface LodOptions {
 }
 
 /**
+ * Per-frame timing for one drawn layer (DESIGN.md §13). Emitted to the optional
+ * `onFrameStats` sink after each layer draw so hosts and the perf benchmark can
+ * assert the §13 budgets (≤16ms base, ≤4ms overlay at 50k) without the engine
+ * itself depending on `performance` or any logging implementation (DIP).
+ */
+export interface FrameStats {
+  layer: 'base' | 'overlay';
+  /** Wall-clock cost of the layer's draw, in milliseconds. */
+  durationMs: number;
+}
+
+/**
  * Data-driven per-item style overrides (DESIGN.md §11). Each callback runs
  * between the theme default and the item's own `.style`; most specific wins.
  */
@@ -131,6 +143,12 @@ export interface TimelineEngineOptions<TData = unknown> {
   styleResolvers?: StyleResolvers<TData>;
   /** Label/tick text formatters (DESIGN.md §11). */
   formatters?: Formatters<TData>;
+  /**
+   * Optional per-frame timing sink (DESIGN.md §13). When supplied, each layer
+   * draw is bracketed with `performance.now()` and reported; when omitted the
+   * draw path stays allocation- and measurement-free (zero overhead).
+   */
+  onFrameStats?: (stats: FrameStats) => void;
 }
 
 /** Minimum pixel spacing header labels need (§8). */
@@ -182,6 +200,8 @@ export class TimelineEngine<TData = unknown> {
     event: TimelineEvent<TData>,
   ) => string | undefined;
   private readonly tickFormatter: TickFormatter | undefined;
+  /** Optional per-frame timing sink (DESIGN.md §13); undefined disables timing. */
+  private readonly onFrameStats?: (stats: FrameStats) => void;
   private readonly iconCache = new IconCache(() =>
     this.scheduler.markDirty('base'),
   );
@@ -273,6 +293,7 @@ export class TimelineEngine<TData = unknown> {
     this.formatEventLabel =
       options.formatters?.eventLabel ?? ((event) => event.label);
     this.tickFormatter = options.formatters?.tickLabel;
+    this.onFrameStats = options.onFrameStats;
     this.store = new DataStore<TData>({ onDiagnostic: options.onDiagnostic });
     this.camera = new Camera(this.metrics);
     this.renderer = new Canvas2DRenderer(
@@ -590,14 +611,29 @@ export class TimelineEngine<TData = unknown> {
 
   private drawFrame(dirty: DirtyFlags): void {
     if (this.disposed) return;
-    if (dirty.base) this.drawBase();
+    if (dirty.base) this.timed('base', this.drawBase);
     // The overlay highlights this frame's `frameTargets`, which `drawBase`
     // rebuilds at the current camera position. So it must re-render whenever the
     // base moved — not only on overlay-only (hover/selection) changes —
     // otherwise a pan/zoom slides the content while a stale highlight stays
     // pinned to its old screen position. (§4's independence is the *other*
     // direction: an overlay-only change never forces a base redraw.)
-    if (dirty.base || dirty.overlay) this.drawOverlay();
+    if (dirty.base || dirty.overlay) this.timed('overlay', this.drawOverlay);
+  }
+
+  /**
+   * Run one layer's draw, reporting its wall-clock cost to `onFrameStats` when a
+   * sink is set (DESIGN.md §13). With no sink the draw runs directly — no
+   * `performance.now()` calls, no allocation — so timing is truly opt-in.
+   */
+  private timed(layer: 'base' | 'overlay', draw: () => void): void {
+    if (this.onFrameStats === undefined) {
+      draw.call(this);
+      return;
+    }
+    const start = performance.now();
+    draw.call(this);
+    this.onFrameStats({ layer, durationMs: performance.now() - start });
   }
 
   private drawBase(): void {

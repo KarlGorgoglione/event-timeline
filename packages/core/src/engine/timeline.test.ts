@@ -681,3 +681,84 @@ describe('TimelineEngine streaming mutations (§7, §10)', () => {
     }
   });
 });
+
+describe('TimelineEngine frame-timing seam (§13)', () => {
+  const data: TimelineData = {
+    elements: [
+      { id: 'a', label: 'A' },
+      { id: 'b', label: 'B' },
+    ],
+    events: [
+      { id: 'e1', sourceId: 'a', targetId: 'b', time: Date.UTC(2026, 0, 1) },
+    ],
+  };
+
+  // Controllable rAF so each flush() drives exactly one engine frame.
+  function controllableRaf() {
+    let queued: Array<() => void> = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      queued.push(cb);
+      return queued.length;
+    });
+    return () => {
+      const run = queued;
+      queued = [];
+      for (const cb of run) cb();
+    };
+  }
+
+  it('reports base then overlay timing for a base-dirty frame', () => {
+    const flush = controllableRaf();
+    const stats: { layer: string; durationMs: number }[] = [];
+    const engine = new TimelineEngine(makeCanvas(), makeCanvas(), {
+      onFrameStats: (s) => stats.push(s),
+    });
+    engine.resize(800, 400, 1);
+    engine.setData(data); // marks base dirty
+    flush();
+
+    // A base redraw drags the overlay with it (§4), so both layers are timed.
+    expect(stats.map((s) => s.layer)).toEqual(['base', 'overlay']);
+    for (const s of stats) {
+      expect(Number.isFinite(s.durationMs)).toBe(true);
+      expect(s.durationMs).toBeGreaterThanOrEqual(0);
+    }
+    engine.dispose();
+  });
+
+  it('reports overlay-only timing for an overlay-dirty frame (select)', () => {
+    const flush = controllableRaf();
+    const stats: { layer: string }[] = [];
+    const engine = new TimelineEngine(makeCanvas(), makeCanvas(), {
+      onFrameStats: (s) => stats.push(s),
+    });
+    engine.resize(800, 400, 1);
+    engine.setData(data);
+    flush();
+    stats.length = 0;
+
+    engine.select(['element:a']); // marks overlay dirty only
+    flush();
+
+    expect(stats.map((s) => s.layer)).toEqual(['overlay']);
+    engine.dispose();
+  });
+
+  it('does not invoke the sink when none is supplied (zero-overhead path)', () => {
+    // No throw / no measurement when the option is omitted: the recording canvas
+    // confirms the frame still drew its content.
+    const flush = controllableRaf();
+    const calls: Record<string, number> = {};
+    const engine = new TimelineEngine(
+      makeRecordingCanvas((name) => {
+        calls[name] = (calls[name] ?? 0) + 1;
+      }),
+      makeRecordingCanvas(() => {}),
+    );
+    engine.resize(800, 400, 1);
+    engine.setData(data);
+    expect(() => flush()).not.toThrow();
+    expect(calls.fillText ?? 0).toBeGreaterThan(0);
+    engine.dispose();
+  });
+});

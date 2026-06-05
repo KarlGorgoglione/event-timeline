@@ -8,7 +8,7 @@
 
 import { createPortal } from 'react-dom';
 import type { CSSProperties, ReactPortal } from 'react';
-import type { HitResult } from '@timeline/core';
+import type { HitResult } from '@event-timeline/core';
 
 export interface TooltipProps<TData = unknown> {
   /** The current hover hit, or null when nothing is hovered. */

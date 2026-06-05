@@ -1,9 +1,32 @@
 {
-  "name": "@timeline/react",
+  "name": "@event-timeline/react",
   "version": "0.0.0",
   "description": "React binding for the Canvas timeline engine.",
+  "license": "MIT",
+  "author": "Karl Gorgoglione",
+  "homepage": "https://github.com/kgorgoglione/react-timeline/tree/main/packages/react#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kgorgoglione/react-timeline.git",
+    "directory": "packages/react"
+  },
+  "bugs": {
+    "url": "https://github.com/kgorgoglione/react-timeline/issues"
+  },
+  "keywords": [
+    "timeline",
+    "canvas",
+    "react",
+    "visualization",
+    "events",
+    "graph",
+    "typescript"
+  ],
   "type": "module",
   "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
   "files": [
     "dist"
   ],
@@ -32,7 +55,7 @@
     "react-dom": ">=18"
   },
   "dependencies": {
-    "@timeline/core": "workspace:*"
+    "@event-timeline/core": "workspace:*"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",

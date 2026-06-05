@@ -9,16 +9,31 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      '@timeline/react': fileURLToPath(
+      '@event-timeline/react': fileURLToPath(
         new URL('../../packages/react/src/index.ts', import.meta.url),
       ),
-      '@timeline/core': fileURLToPath(
+      '@event-timeline/core': fileURLToPath(
         new URL('../../packages/core/src/index.ts', import.meta.url),
       ),
     },
   },
+  // Emit both HTML entries on `vite build`: the React demo and the headless perf
+  // harness (§13). Perf benchmarks run against this *production* preview build,
+  // not the dev server, so frame times reflect minified/optimised code.
+  build: {
+    rollupOptions: {
+      input: {
+        index: fileURLToPath(new URL('index.html', import.meta.url)),
+        bench: fileURLToPath(new URL('bench.html', import.meta.url)),
+      },
+    },
+  },
   server: {
     port: 5173,
+    strictPort: true,
+  },
+  preview: {
+    port: 4173,
     strictPort: true,
   },
 });

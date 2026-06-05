@@ -10,7 +10,7 @@ import {
   type StyleResolvers,
   type Theme,
   type TimelineHandle,
-} from '@timeline/react';
+} from '@event-timeline/react';
 import { demoData } from './fixture';
 import { makeStreamBatch, makeSynthetic, type DemoDatum } from './synthetic';
 import { makeAmlScenario } from './scenario';
