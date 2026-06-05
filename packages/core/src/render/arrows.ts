@@ -41,8 +41,6 @@ const HORIZONTAL_MARGIN_PX = 48;
 const CLUSTER_MARKER_BONUS_PX = 2;
 /** Radius of the semicircular hop a riser makes over a crossed line (§16). */
 const HOP_RADIUS_PX = 4;
-/** Skip hop computation beyond this row span (perf guard, §13); draw straight. */
-const MAX_HOP_SPAN_ROWS = 24;
 /** Pointing straight down / up in screen space (y-down); risers are vertical. */
 const ANGLE_DOWN = Math.PI / 2;
 const ANGLE_UP = -Math.PI / 2;
@@ -250,21 +248,27 @@ function addSingleArrow<TData>(
 /**
  * Screen-Y of each intermediary element line the riser crosses: rows strictly
  * between source and target whose element line is present at the event's time.
- * Bounded by {@link MAX_HOP_SPAN_ROWS} so a tall riser never scans the whole
- * column (§13). The line's small lead pad is ignored — the extent test is close
- * enough and the hop is cosmetic.
+ *
+ * The scan is clamped to the visible band (§5): only lines *on screen* can be
+ * visibly crossed, so a tall riser whose endpoints are far off-screen still hops
+ * over the lines it crosses within the band — and the scan stays bounded by the
+ * viewport height, never the full data height (§13 perf). The line's small lead
+ * pad is ignored — the extent test is close enough and the hop is cosmetic.
  */
 function intermediaryCrossings<TData>(
   ctx: BuildContext<TData>,
   rows: { lo: number; hi: number },
   time: number,
 ): number[] {
-  if (rows.hi - rows.lo <= 1 || rows.hi - rows.lo > MAX_HOP_SPAN_ROWS)
-    return [];
-  const { rowLayout, data, camera, theme } = ctx;
+  const { rowLayout, data, camera, theme, band } = ctx;
+  // Intermediary rows are strictly between source and target; only those inside
+  // the visible band can be crossed on screen.
+  const lo = Math.max(rows.lo + 1, band.firstRow);
+  const hi = Math.min(rows.hi - 1, band.lastRow);
+  if (hi < lo) return [];
   const halfRow = theme.rowHeight / 2;
   const ys: number[] = [];
-  for (let r = rows.lo + 1; r < rows.hi; r++) {
+  for (let r = lo; r <= hi; r++) {
     const id = rowLayout.orderedIds[r];
     if (id === undefined) continue;
     const extent = data.getExtent(id);
