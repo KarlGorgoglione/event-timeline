@@ -100,7 +100,11 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Build demo
+        # Pages serves this project site under `/event-timeline/`, so prefix
+        # asset paths for this build only (local/e2e builds stay at root).
         run: pnpm --filter demo run build
+        env:
+          DEMO_BASE: /event-timeline/
 
       - name: Configure Pages
         uses: actions/configure-pages@v5

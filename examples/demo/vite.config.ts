@@ -5,12 +5,13 @@ import react from '@vitejs/plugin-react';
 // Resolve the workspace packages to their TypeScript source so the demo gets
 // live hot-reload into the library and runs on a fresh clone without a prior
 // `pnpm build`. The published packages still consume the built `dist` output.
-export default defineConfig(({ command }) => ({
-  // GitHub Pages serves project sites under `/<repo>/`, so production builds
-  // need that path prefix to resolve assets; the dev server stays at root.
-  // `DEMO_BASE` overrides both (e.g. custom domain → '/', or a fork's repo).
-  base:
-    process.env.DEMO_BASE ?? (command === 'build' ? '/event-timeline/' : '/'),
+export default defineConfig({
+  // Default to a root base so dev, local builds, and the Playwright preview
+  // (served at `/`, healthchecked at `/bench.html`) all behave as before. The
+  // GitHub Pages deploy serves the demo under `/<repo>/`, so its build step
+  // sets `DEMO_BASE=/event-timeline/` to prefix asset paths — opt-in, scoped to
+  // that one build, so it can't break the e2e/perf preview server.
+  base: process.env.DEMO_BASE ?? '/',
   plugins: [react()],
   resolve: {
     alias: {
@@ -41,4 +42,4 @@ export default defineConfig(({ command }) => ({
     port: 4173,
     strictPort: true,
   },
-}));
+});
