@@ -1,6 +1,6 @@
 {
   "name": "@event-timeline/core",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Framework-agnostic Canvas timeline engine (pure TypeScript).",
   "license": "MIT",
   "author": "Karl Gorgoglione",
