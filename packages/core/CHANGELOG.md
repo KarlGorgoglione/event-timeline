@@ -1,5 +1,26 @@
 # @event-timeline/core
 
+## 0.1.2
+
+### Patch Changes
+
+- 195c489: Fix framerate degrading as you zoom _in_ (worst when fully zoomed in, recovering
+  as you zoom out). Each element line was drawn — and rasterized into the 64px
+  hit-test grid cell-by-cell — across its full extent in screen-x, which grows with
+  zoom: at maximum zoom a line spans ~1.5M px, so a single line registered in
+  ~23,000 hit-grid cells (~700k cell insertions per frame across the visible rows),
+  plus the cost of stroking million-pixel lines. The off-screen portion is
+  invisible and un-hittable, so element lines are now clamped to the viewport (plus
+  a small margin) before drawing and hit-indexing. The line is horizontal, so the
+  visible result is pixel-identical; the per-frame cost becomes bounded by the
+  viewport instead of the zoom level.
+- 195c489: Fix risers not hopping over element lines they cross when source and target are
+  far apart. The hop computation was skipped whenever an event's full source→target
+  row span exceeded a fixed limit, so in large datasets most arrows cut straight
+  through the lines they crossed instead of bridging over them. The crossing scan
+  is now clamped to the visible row band: tall risers hop over every on-screen line
+  they cross, and the work stays bounded by the viewport height.
+
 ## 0.1.1
 
 ### Patch Changes
