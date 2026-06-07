@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  scaleDash,
   snapArrowheads,
   snapIcons,
   snapLabels,
@@ -77,5 +78,38 @@ describe('snap CSS→device pass (§3)', () => {
     const image = {} as HTMLImageElement;
     const batch = snapIcons({ items: [{ x: 5, y: 6, size: 16, image }] }, 2);
     expect(batch.items[0]).toEqual({ x: 10, y: 12, size: 32, image });
+  });
+});
+
+describe('line dash scaling (§11 border style)', () => {
+  it('scaleDash multiplies each length by dpr', () => {
+    expect(scaleDash([4, 2], 2)).toEqual([8, 4]);
+    expect(scaleDash([3, 3], 1)).toEqual([3, 3]);
+  });
+
+  it('scaleDash returns undefined for an empty or omitted pattern (solid)', () => {
+    expect(scaleDash([], 2)).toBeUndefined();
+    expect(scaleDash(undefined, 2)).toBeUndefined();
+  });
+
+  it('snapLines carries a dpr-scaled dash through to the batch', () => {
+    const batch = snapLines(
+      {
+        color: '#fff',
+        width: 1,
+        dash: [4, 2],
+        segments: [{ x1: 0, y1: 0, x2: 10, y2: 0 }],
+      },
+      2,
+    );
+    expect(batch.dash).toEqual([8, 4]);
+  });
+
+  it('snapLines leaves a solid line dashless (undefined)', () => {
+    const batch = snapLines(
+      { color: '#fff', width: 1, segments: [{ x1: 0, y1: 0, x2: 10, y2: 0 }] },
+      2,
+    );
+    expect(batch.dash).toBeUndefined();
   });
 });

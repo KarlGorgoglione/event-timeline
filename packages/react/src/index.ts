@@ -16,6 +16,8 @@ export type {
   Theme,
   ElementStyle,
   EventStyle,
+  LineDash,
+  RowSeparatorStyle,
   StyleResolvers,
   Formatters,
   ElementStyleResolver,
@@ -26,3 +28,7 @@ export type {
 
 // Built-in layout strategies (DESIGN.md §7), so hosts can name one in `options`.
 export { byFirstEvent, barycenter, explicit } from '@event-timeline/core';
+
+// The dark theme default (base of the §11 resolution chain), so hosts can read
+// or compose against it when building a `Partial<Theme>`.
+export { defaultTheme } from '@event-timeline/core';

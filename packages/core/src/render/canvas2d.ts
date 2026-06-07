@@ -83,12 +83,17 @@ export class Canvas2DRenderer implements Renderer {
     const ctx = this.current;
     ctx.strokeStyle = batch.color;
     ctx.lineWidth = batch.width;
+    const dash = batch.dash;
+    const dashed = dash !== undefined && dash.length > 0;
+    if (dashed) ctx.setLineDash(dash);
     ctx.beginPath();
     for (const s of batch.segments) {
       ctx.moveTo(s.x1, s.y1);
       ctx.lineTo(s.x2, s.y2);
     }
     ctx.stroke();
+    // Reset so a dashed batch never bleeds into the next solid one (§4).
+    if (dashed) ctx.setLineDash([]);
   }
 
   drawText(batch: TextBatch): void {

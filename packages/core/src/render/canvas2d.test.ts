@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Canvas2DRenderer } from './canvas2d';
-import type { ImageBatch } from './types';
+import type { ImageBatch, LineBatch } from './types';
 
 // The node test env has no real 2D context, so inject a fake one that records
 // the calls drawImages makes. This exercises the actual backend (including its
@@ -79,5 +79,63 @@ describe('Canvas2DRenderer.drawImages (§4)', () => {
       }),
     ).not.toThrow();
     expect(drawn).toEqual([good]);
+  });
+});
+
+interface FakeLineCtx {
+  strokeStyle: string;
+  lineWidth: number;
+  fillStyle: string;
+  fillRect: (...args: unknown[]) => void;
+  setLineDash: (dash: number[]) => void;
+  beginPath: () => void;
+  moveTo: (...args: unknown[]) => void;
+  lineTo: (...args: unknown[]) => void;
+  stroke: () => void;
+}
+
+function makeLineRenderer(dashCalls: number[][]): Canvas2DRenderer {
+  const ctx: FakeLineCtx = {
+    strokeStyle: '',
+    lineWidth: 0,
+    fillStyle: '',
+    fillRect: () => {},
+    setLineDash: (dash) => dashCalls.push([...dash]),
+    beginPath: () => {},
+    moveTo: () => {},
+    lineTo: () => {},
+    stroke: () => {},
+  };
+  const canvas = {
+    width: 0,
+    height: 0,
+    getContext: () => ctx,
+  } as unknown as HTMLCanvasElement;
+  return new Canvas2DRenderer(canvas, canvas, '#000');
+}
+
+describe('Canvas2DRenderer.drawLines dash handling (§4, §11)', () => {
+  const segments = [{ x1: 0, y1: 0, x2: 10, y2: 0 }];
+
+  it('applies a dash then resets it so the next batch is solid', () => {
+    const dashCalls: number[][] = [];
+    const r = makeLineRenderer(dashCalls);
+    r.beginFrame('base');
+    const batch: LineBatch = {
+      color: '#fff',
+      width: 1,
+      dash: [8, 4],
+      segments,
+    };
+    r.drawLines(batch);
+    expect(dashCalls).toEqual([[8, 4], []]);
+  });
+
+  it('leaves the dash untouched for a solid batch', () => {
+    const dashCalls: number[][] = [];
+    const r = makeLineRenderer(dashCalls);
+    r.beginFrame('base');
+    r.drawLines({ color: '#fff', width: 1, segments });
+    expect(dashCalls).toEqual([]);
   });
 });

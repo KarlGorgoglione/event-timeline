@@ -30,9 +30,11 @@ import {
   snapDevice,
 } from '../render/device';
 import { buildElementLines, markerReserveLeftPx } from '../render/elementLines';
+import { buildRowSeparators } from '../render/separators';
 import { IconCache, isIconUrl } from '../render/iconCache';
 import { visibleRowBand } from '../render/rowBand';
 import {
+  scaleDash,
   snapArrowheads,
   snapIcons,
   snapLabels,
@@ -671,8 +673,11 @@ export class TimelineEngine<TData = unknown> {
     );
 
     // Major gridlines run from the header bottom down through the content; drawn
-    // before content so element lines and arrows sit over them.
-    const gridWidth = Math.max(1, snapDevice(1, dpr));
+    // before content so element lines and arrows sit over them. Gridlines build
+    // directly in device px (they bypass the spec/snap pass), so their dash is
+    // dpr-scaled inline here — the lone exception to the §3 single snap boundary.
+    const gridWidth = Math.max(1, snapDevice(this.theme.gridlineWidth, dpr));
+    const gridDash = scaleDash(this.theme.gridlineDash, dpr);
     const gridSegments: LineSegment[] = ticks.major.map((tick) => {
       const x =
         snapDevice(this.camera.timeToScreenX(tick.time), dpr) +
@@ -687,6 +692,7 @@ export class TimelineEngine<TData = unknown> {
     this.renderer.drawLines({
       color: this.theme.gridlineColor,
       width: gridWidth,
+      dash: gridDash,
       segments: gridSegments,
     });
 
@@ -720,6 +726,11 @@ export class TimelineEngine<TData = unknown> {
     this.frameTargets = [...elements.targets, ...arrows.targets];
     this.hitGrid = buildHitGrid(this.frameTargets);
 
+    // Row separators sit under the content (like gridlines) so element lines and
+    // arrows draw over them. No-op unless theme.rowSeparator.enabled (§11).
+    for (const spec of buildRowSeparators(ctx)) {
+      this.renderer.drawLines(snapLines(spec, dpr));
+    }
     for (const spec of elements.lines) {
       this.renderer.drawLines(snapLines(spec, dpr));
     }
@@ -753,6 +764,7 @@ export class TimelineEngine<TData = unknown> {
     this.renderer.drawLines({
       color: this.theme.gridlineColor,
       width: gridWidth,
+      dash: gridDash,
       segments: [
         { x1: 0, y1: baselineY, x2: snapDevice(cssWidth, dpr), y2: baselineY },
       ],
@@ -766,7 +778,7 @@ export class TimelineEngine<TData = unknown> {
       align: 'center',
       items: ticks.major.map((tick) => ({
         x: snapDevice(this.camera.timeToScreenX(tick.time), dpr),
-        y: snapDevice(headerHeight * 0.32, dpr),
+        y: snapDevice(headerHeight * this.theme.headerMajorTickRatio, dpr),
         text: tick.label,
       })),
     });
@@ -777,7 +789,7 @@ export class TimelineEngine<TData = unknown> {
       align: 'center',
       items: ticks.minor.map((tick) => ({
         x: snapDevice(this.camera.timeToScreenX(tick.time), dpr),
-        y: snapDevice(headerHeight * 0.72, dpr),
+        y: snapDevice(headerHeight * this.theme.headerMinorTickRatio, dpr),
         text: tick.label,
       })),
     });
@@ -805,39 +817,51 @@ export class TimelineEngine<TData = unknown> {
     const selectedElementIds = elementIdsFromKeys(this.selectedIds);
 
     for (const target of this.frameTargets) {
-      const color = this.highlightColorFor(
+      const emphasis = this.highlightColorFor(
         target,
         hoveredKey,
         hoveredElementId,
         selectedElementIds,
       );
-      if (color !== null) this.drawHighlight(target, color, dpr);
+      if (emphasis !== null) {
+        this.drawHighlight(target, emphasis.color, emphasis.widthBonus, dpr);
+      }
     }
 
     this.renderer.endFrame('overlay');
   }
 
   /**
-   * Overlay colour for a target, or null when it should not highlight. A target
-   * highlights when it is itself hovered/selected, or — for an event/cluster —
-   * when one of its endpoints is a hovered/selected element (§9). Hover wins the
-   * colour over selection.
+   * Overlay emphasis (colour + extra stroke width) for a target, or null when it
+   * should not highlight. A target highlights when it is itself hovered/selected,
+   * or — for an event/cluster — when one of its endpoints is a hovered/selected
+   * element (§9). Hover wins over selection.
    */
   private highlightColorFor(
     target: HitTarget<TData>,
     hoveredKey: string | null,
     hoveredElementId: string | null,
     selectedElementIds: ReadonlySet<string>,
-  ): string | null {
+  ): { color: string; widthBonus: number } | null {
     const key = targetKey(target);
     const hovered =
       key === hoveredKey ||
       (hoveredElementId !== null && touchesElement(target, hoveredElementId));
-    if (hovered) return this.theme.hoverColor;
+    if (hovered) {
+      return {
+        color: this.theme.hoverColor,
+        widthBonus: this.theme.hoverWidthBonus,
+      };
+    }
     const selected =
       this.selectedIds.has(key) ||
       touchesAnyElement(target, selectedElementIds);
-    if (selected) return this.theme.selectionColor;
+    if (selected) {
+      return {
+        color: this.theme.selectionColor,
+        widthBonus: this.theme.selectionWidthBonus,
+      };
+    }
     return null;
   }
 
@@ -857,18 +881,24 @@ export class TimelineEngine<TData = unknown> {
     }
   }
 
-  /** Redraw one target's geometry in `color`, slightly thickened, on the overlay. */
+  /**
+   * Redraw one target's geometry in `color`, thickened by `widthBonus`, on the
+   * overlay. Highlights are always solid: emphasis is a thicker solid stroke over
+   * the (possibly dashed) base line, and `HitTarget` carries no dash to reproduce.
+   */
   private drawHighlight(
     target: HitTarget<TData>,
     color: string,
+    widthBonus: number,
     dpr: number,
   ): void {
+    const radiusBonus = this.theme.emphasisRadiusBonus;
     if (target.kind === 'element') {
       this.renderer.drawLines(
         snapLines(
           {
             color,
-            width: target.width + 2,
+            width: target.width + widthBonus,
             segments: [
               { x1: target.x1, y1: target.y, x2: target.x2, y2: target.y },
             ],
@@ -882,14 +912,22 @@ export class TimelineEngine<TData = unknown> {
       if (target.segments.length > 0) {
         this.renderer.drawLines(
           snapLines(
-            { color, width: target.width + 2, segments: target.segments },
+            {
+              color,
+              width: target.width + widthBonus,
+              segments: target.segments,
+            },
             dpr,
           ),
         );
       }
       this.renderer.drawNodes(
         snapNodes(
-          { color, radius: target.markerSize + 1, items: [target.marker] },
+          {
+            color,
+            radius: target.markerSize + radiusBonus,
+            items: [target.marker],
+          },
           dpr,
         ),
       );
@@ -897,7 +935,7 @@ export class TimelineEngine<TData = unknown> {
     }
     this.renderer.drawLines(
       snapLines(
-        { color, width: target.width + 2, segments: target.segments },
+        { color, width: target.width + widthBonus, segments: target.segments },
         dpr,
       ),
     );
@@ -907,7 +945,11 @@ export class TimelineEngine<TData = unknown> {
     if (dots.length > 0) {
       this.renderer.drawNodes(
         snapNodes(
-          { color, radius: this.theme.event.nodeRadius + 1, items: dots },
+          {
+            color,
+            radius: this.theme.event.nodeRadius + radiusBonus,
+            items: dots,
+          },
           dpr,
         ),
       );
@@ -917,7 +959,7 @@ export class TimelineEngine<TData = unknown> {
         snapArrowheads(
           {
             color,
-            size: target.arrowheadSize + 1,
+            size: target.arrowheadSize + radiusBonus,
             items: [{ ...target.arrowhead, angle: arrowheadAngle(target) }],
           },
           dpr,

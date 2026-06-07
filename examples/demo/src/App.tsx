@@ -3,6 +3,7 @@ import {
   Timeline,
   barycenter,
   byFirstEvent,
+  defaultTheme,
   explicit,
   type Formatters,
   type HitResult,
@@ -42,6 +43,7 @@ const lightTheme: Partial<Theme> = {
   element: {
     lineColor: '#2563eb',
     lineWidth: 2,
+    lineDash: [],
     labelColor: '#1f2933',
     labelFont: '12px system-ui, sans-serif',
     iconSize: 16,
@@ -49,12 +51,32 @@ const lightTheme: Partial<Theme> = {
   event: {
     arrowColor: '#52606d',
     arrowWidth: 1,
+    arrowDash: [],
     arrowheadSize: 6,
     labelColor: '#1f2933',
     labelFont: '11px system-ui, sans-serif',
     nodeRadius: 3,
   },
 };
+
+/** Parametrization demo (§11): layer dashed lines/arrows, dashed gridlines, and
+ * row separators over whatever base theme is active. Returns a single composed
+ * `Partial<Theme>` (the React `theme` prop is one partial — no chaining), so the
+ * decoration deltas are merged into the base's nested style objects here. */
+function withDecorations(base: Partial<Theme>): Partial<Theme> {
+  return {
+    ...base,
+    gridlineDash: [2, 4],
+    rowSeparator: {
+      enabled: true,
+      color: 'rgba(127,127,127,0.18)',
+      width: 1,
+      dash: [],
+    },
+    element: { ...defaultTheme.element, ...base.element, lineDash: [6, 3] },
+    event: { ...defaultTheme.event, ...base.event, arrowDash: [3, 3] },
+  };
+}
 
 /** Five-colour palette for the data-driven style resolvers. Bucket 0 is a muted
  * grey so AML-scenario background activity recedes and tagged patterns pop
@@ -109,6 +131,7 @@ export function App() {
   const [aml, setAml] = useState(false);
   const [layoutName, setLayoutName] = useState<LayoutName>('byFirstEvent');
   const [themed, setThemed] = useState(false);
+  const [decorated, setDecorated] = useState(false);
   const [coloured, setColoured] = useState(false);
   const [labelled, setLabelled] = useState(false);
   const [hover, setHover] = useState<HitResult<DemoDatum> | null>(null);
@@ -149,7 +172,11 @@ export function App() {
   // Phase 6 props, memoized so the engine isn't re-created every render (§12).
   // Each is undefined when its toggle is off, so the engine falls back to the
   // dark theme / per-item `.style` / raw labels respectively.
-  const theme = useMemo(() => (themed ? lightTheme : undefined), [themed]);
+  const theme = useMemo<Partial<Theme> | undefined>(() => {
+    const base = themed ? lightTheme : {};
+    if (decorated) return withDecorations(base);
+    return themed ? lightTheme : undefined;
+  }, [themed, decorated]);
   const styleResolvers = useMemo<StyleResolvers<DemoDatum> | undefined>(
     () =>
       coloured
@@ -305,6 +332,14 @@ export function App() {
           style={{ font: '12px system-ui' }}
         >
           theme: {themed ? 'light' : 'dark'}
+        </button>
+        <button
+          type="button"
+          data-testid="toggle-decorations"
+          onClick={() => setDecorated((v) => !v)}
+          style={{ font: '12px system-ui' }}
+        >
+          decor: {decorated ? 'on' : 'off'}
         </button>
         <button
           type="button"

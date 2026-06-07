@@ -19,8 +19,6 @@ import type {
   LineSpec,
 } from './specs';
 
-/** CSS px of line drawn before an element's first event — the lead gap (§1). */
-export const LINE_LEAD_PAD_PX = 12;
 /**
  * CSS px of slack each side of the viewport that an element line's drawn extent
  * is clamped to. A line spans its element's full extent in screen-x, which at
@@ -30,8 +28,6 @@ export const LINE_LEAD_PAD_PX = 12;
  * the viewport), and the line is horizontal, so clamping changes nothing visible.
  */
 export const OFFSCREEN_LINE_MARGIN_PX = 128;
-/** Gap between the start marker (icon/label block) and the line's left end. */
-const MARKER_GAP_PX = 8;
 /** Vertical gap between the stacked icon and the label beneath it. */
 const STACK_GAP_PX = 2;
 /** Fallback label line height when a font's px size can't be parsed. */
@@ -52,7 +48,12 @@ const FIT_LABEL_BUDGET_PX = 96;
  */
 export function markerReserveLeftPx(theme: Theme): number {
   const markerContentW = Math.max(theme.element.iconSize, FIT_LABEL_BUDGET_PX);
-  return theme.labelPadding + markerContentW + MARKER_GAP_PX + LINE_LEAD_PAD_PX;
+  return (
+    theme.labelPadding +
+    markerContentW +
+    theme.markerGap +
+    theme.lineLeadPadding
+  );
 }
 
 // Extract the leading px size from a CSS font shorthand (e.g. "12px Inter").
@@ -77,6 +78,8 @@ export function buildElementLines<TData>(
 ): ElementLinesResult<TData> {
   const { camera, rowLayout, data, viewport, theme, band, resolveIcon } = ctx;
   const rowHeight = theme.rowHeight;
+  const leadPad = theme.lineLeadPadding;
+  const markerGap = theme.markerGap;
 
   const lines = new Map<string, LineSpec>();
   const labels = new Map<string, LabelSpec>();
@@ -98,7 +101,7 @@ export function buildElementLines<TData>(
     // viewport), so we must NOT cull on a negative lineStartX. `lineEndX <= 0`
     // means the whole line sits at/left of the edge — nothing visible — so the
     // cull and the `lineEndX > 0` sticky guard below agree on "visible = > 0".
-    if (lineEndX <= 0 || lineStartX - LINE_LEAD_PAD_PX > viewport.cssWidth) {
+    if (lineEndX <= 0 || lineStartX - leadPad > viewport.cssWidth) {
       continue;
     }
 
@@ -109,7 +112,7 @@ export function buildElementLines<TData>(
     const style = element ? ctx.resolveElementStyle(element) : theme.element;
     const lineColor = style.lineColor;
     const lineWidth = style.lineWidth;
-    const x1 = lineStartX - LINE_LEAD_PAD_PX;
+    const x1 = lineStartX - leadPad;
     // Clamp the *drawn* extent to the viewport (+ slack). The start marker below
     // still keys off the true `x1`, so its sticky-left fallback is unchanged —
     // only the off-screen, invisible run of the horizontal line is trimmed (§13).
@@ -118,7 +121,7 @@ export function buildElementLines<TData>(
       lineEndX,
       viewport.cssWidth + OFFSCREEN_LINE_MARGIN_PX,
     );
-    lineBatch(lines, lineColor, lineWidth).segments.push({
+    lineBatch(lines, lineColor, lineWidth, style.lineDash).segments.push({
       x1: drawX1,
       y1: rowCenterY,
       x2: drawX2,
@@ -148,7 +151,7 @@ export function buildElementLines<TData>(
     if (icon !== undefined) {
       const markerHalfW = iconSize / 2;
       const markerCenterX = Math.max(
-        x1 - MARKER_GAP_PX - markerHalfW,
+        x1 - markerGap - markerHalfW,
         theme.labelPadding + markerHalfW,
       );
       // Centre the icon+label stack vertically on the row centre.
@@ -184,7 +187,7 @@ export function buildElementLines<TData>(
       // No icon: right-align the label so its right edge sits a gap left of the
       // line start — it can never overflow onto the line. When the line start
       // scrolls off-screen, fall back to a left-anchored sticky label.
-      const labelRightX = x1 - MARKER_GAP_PX;
+      const labelRightX = x1 - markerGap;
       if (labelRightX >= theme.labelPadding) {
         labelBatch(
           labels,
