@@ -28,10 +28,16 @@ export interface LineSegment {
   y2: number;
 }
 
-/** Lines sharing one colour/width, drawn as a single path (§4 batch-by-style). */
+/** Lines sharing one colour/width/dash, drawn as a single path (§4 batch-by-style). */
 export interface LineBatch {
   color: string;
   width: number;
+  /**
+   * Dash pattern in DEVICE pixels (already dpr-scaled, §3). Omitted or empty
+   * means a solid line; the backend resets its dash state afterwards so it never
+   * bleeds into the next batch.
+   */
+  dash?: number[];
   segments: LineSegment[];
 }
 

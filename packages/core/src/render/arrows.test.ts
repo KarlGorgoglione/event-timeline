@@ -302,6 +302,40 @@ describe('buildArrows styling & formatting (§11)', () => {
     );
     expect(r.labels).toHaveLength(0);
   });
+
+  it('carries a resolved arrow dash into the riser batch (§11 border style)', () => {
+    const r = buildArrows(
+      ctxFor(
+        [
+          ev({
+            sourceId: 'r0',
+            targetId: 'r2',
+            time: 100,
+            style: { arrowDash: [3, 3] },
+          }),
+        ],
+        fullBand,
+      ),
+    );
+    expect(r.lines[0]!.dash).toEqual([3, 3]);
+  });
+
+  it('dashes the self-loop riser from the resolved style', () => {
+    const r = buildArrows(
+      ctxFor(
+        [
+          ev({
+            sourceId: 'r3',
+            targetId: 'r3',
+            time: 100,
+            style: { arrowDash: [2, 2] },
+          }),
+        ],
+        fullBand,
+      ),
+    );
+    expect(r.lines[0]!.dash).toEqual([2, 2]);
+  });
 });
 
 describe('buildArrows self-events (§1)', () => {
@@ -466,5 +500,21 @@ describe('buildArrows clustering (§6)', () => {
     const r = buildArrows(ctxFor(events, fullBand, clusterOn));
     expect(r.arrowheads[0]!.items).toHaveLength(2);
     expect(r.targets.every((t) => t.kind === 'event')).toBe(true);
+  });
+
+  it('styles the cluster marker from theme knobs and keeps its riser solid (§11)', () => {
+    const events = [
+      ev({ id: 'a', sourceId: 'r0', targetId: 'r2', time: 100 }),
+      ev({ id: 'b', sourceId: 'r0', targetId: 'r2', time: 103 }),
+    ];
+    const r = buildArrows(ctxFor(events, fullBand, clusterOn));
+    // The count label uses the dedicated cluster text colour, the marker radius
+    // adds the cluster bonus, and the aggregate riser is always solid.
+    const label = r.labels[0]!;
+    expect(label.color).toBe(defaultTheme.clusterTextColor);
+    expect(r.nodes[0]!.radius).toBe(
+      defaultTheme.event.nodeRadius + defaultTheme.clusterMarkerBonus,
+    );
+    expect(r.lines[0]!.dash).toEqual([]);
   });
 });

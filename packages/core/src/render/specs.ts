@@ -27,10 +27,12 @@ export interface SpecSegment {
   y2: number;
 }
 
-/** Lines sharing one colour/width (snapped into a single path, §4). */
+/** Lines sharing one colour/width/dash (snapped into a single path, §4). */
 export interface LineSpec {
   color: string;
   width: number;
+  /** Dash pattern in CSS px; omitted or empty means solid. Scaled in `snap.ts`. */
+  dash?: number[];
   segments: SpecSegment[];
 }
 

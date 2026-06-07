@@ -40,4 +40,16 @@ describe('overlayStyle (§11 resolution order)', () => {
     overlayStyle(base, { lineColor: '#abc' });
     expect(base).toEqual(snapshot);
   });
+
+  it('carries a dash pattern through the resolution chain', () => {
+    const resolved = overlayStyle(base, { lineDash: [4, 2] });
+    expect(resolved.lineDash).toEqual([4, 2]);
+  });
+
+  it('treats an explicit empty dash as "solid", overriding a resolver dash', () => {
+    // `[]` is a value, not `undefined`, so the most-specific layer wins: an item
+    // can force a solid line even when the resolver dashed it.
+    const resolved = overlayStyle(base, { lineDash: [6, 3] }, { lineDash: [] });
+    expect(resolved.lineDash).toEqual([]);
+  });
 });

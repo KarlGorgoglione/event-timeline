@@ -33,12 +33,8 @@ import type { EventStyle, TimelineEvent } from '../model/types';
 const SUB_LANE_STEP_PX = 2;
 /** Cap on the sub-lane spread; residual overlap is accepted (§16). */
 const SUB_LANE_MAX = 4;
-/** Gap between the riser/marker and its label. */
-const EVENT_LABEL_GAP_PX = 4;
 /** Slack each side for the horizontal cull (arrowhead/node/self-loop extent). */
 const HORIZONTAL_MARGIN_PX = 48;
-/** Extra radius a cluster marker gets over an ordinary source dot. */
-const CLUSTER_MARKER_BONUS_PX = 2;
 /** Radius of the semicircular hop a riser makes over a crossed line (§16). */
 const HOP_RADIUS_PX = 4;
 /** Pointing straight down / up in screen space (y-down); risers are vertical. */
@@ -166,6 +162,7 @@ function addSingleArrow<TData>(
   if (rows === null) return;
   const { camera, theme } = ctx;
   const halfRow = theme.rowHeight / 2;
+  const eventLabelGap = theme.eventLabelGap;
 
   const baseX = camera.timeToScreenX(event.time);
   const column = Math.round(baseX);
@@ -177,16 +174,17 @@ function addSingleArrow<TData>(
   const style = ctx.resolveEventStyle(event);
   const color = style.arrowColor;
   const width = style.arrowWidth;
+  const dash = style.arrowDash;
   const size = style.arrowheadSize;
   const radius = style.nodeRadius;
   const labelText = labelsOn ? ctx.formatEventLabel(event) : undefined;
 
   if (event.sourceId === event.targetId) {
     const y = camera.rowToScreenY(rows.sourceRow) + halfRow;
-    addSelfLoop(batches, { color, width, size, radius }, x, y, event);
+    addSelfLoop(batches, { color, width, dash, size, radius }, x, y, event);
     if (labelText) {
       pushEventLabel(batches.labels, labelText, style, {
-        x: x + size * 2 + EVENT_LABEL_GAP_PX,
+        x: x + size * 2 + eventLabelGap,
         y,
       });
     }
@@ -217,7 +215,7 @@ function addSingleArrow<TData>(
     crossings,
     HOP_RADIUS_PX,
   );
-  lineBatch(batches.lines, color, width).segments.push(...segments);
+  lineBatch(batches.lines, color, width, dash).segments.push(...segments);
 
   const nodes = nodeBatch(batches.nodes, color, radius);
   nodes.items.push({ x, y: ySource });
@@ -239,7 +237,7 @@ function addSingleArrow<TData>(
   });
   if (labelText) {
     pushEventLabel(batches.labels, labelText, style, {
-      x: x + width / 2 + EVENT_LABEL_GAP_PX,
+      x: x + width / 2 + eventLabelGap,
       y: (ySource + yTargetCenter) / 2,
     });
   }
@@ -314,16 +312,22 @@ function addCluster<TData>(
   const yMid = (yTop + yBot) / 2;
   const color = theme.clusterColor;
   const width = theme.event.arrowWidth;
-  const markerRadius = theme.event.nodeRadius + CLUSTER_MARKER_BONUS_PX;
+  const markerRadius = theme.event.nodeRadius + theme.clusterMarkerBonus;
 
   // Riser only when the cluster spans more than one row (else it is a point).
+  // The cluster riser is always solid: an aggregate marker carries the meaning,
+  // and a solid riser keeps it visually distinct from dashed single arrows.
   const segments = yTop !== yBot ? [{ x1: x, y1: yTop, x2: x, y2: yBot }] : [];
   if (segments.length > 0) {
     lineBatch(batches.lines, color, width).segments.push(...segments);
   }
   nodeBatch(batches.nodes, color, markerRadius).items.push({ x, y: yMid });
-  labelBatch(batches.labels, color, theme.event.labelFont).items.push({
-    x: x + markerRadius + EVENT_LABEL_GAP_PX,
+  labelBatch(
+    batches.labels,
+    theme.clusterTextColor,
+    theme.event.labelFont,
+  ).items.push({
+    x: x + markerRadius + theme.eventLabelGap,
     y: yMid,
     text: `×${events.length}`,
   });
@@ -343,7 +347,13 @@ function addCluster<TData>(
  */
 function addSelfLoop<TData>(
   batches: Batches<TData>,
-  style: { color: string; width: number; size: number; radius: number },
+  style: {
+    color: string;
+    width: number;
+    dash: number[];
+    size: number;
+    radius: number;
+  },
   x: number,
   y: number,
   event: TimelineEvent<TData>,
@@ -355,7 +365,9 @@ function addSelfLoop<TData>(
     { x1: x, y1: top, x2: x + loop, y2: top },
     { x1: x + loop, y1: top, x2: x + loop, y2: y },
   ];
-  lineBatch(batches.lines, style.color, style.width).segments.push(...segments);
+  lineBatch(batches.lines, style.color, style.width, style.dash).segments.push(
+    ...segments,
+  );
   nodeBatch(batches.nodes, style.color, style.radius).items.push({ x, y });
   arrowheadBatch(batches.arrowheads, style.color, style.size).items.push({
     x: x + loop,

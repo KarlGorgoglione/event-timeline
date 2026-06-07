@@ -11,11 +11,14 @@ export function lineBatch(
   map: Map<string, LineSpec>,
   color: string,
   width: number,
+  dash: number[] = [],
 ): LineSpec {
-  const key = `${color}|${width}`;
+  // Dash is part of the key: two otherwise-identical lines with different dash
+  // patterns cannot share a single path.
+  const key = `${color}|${width}|${dash.join(',')}`;
   let batch = map.get(key);
   if (batch === undefined) {
-    batch = { color, width, segments: [] };
+    batch = { color, width, dash, segments: [] };
     map.set(key, batch);
   }
   return batch;

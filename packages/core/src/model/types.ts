@@ -48,6 +48,27 @@ export interface TimelineData<TData = unknown> {
 }
 
 /**
+ * A stroke dash pattern in CSS px, with the same semantics as the Canvas
+ * `setLineDash` argument: alternating on/off lengths. The empty array `[]` (the
+ * default everywhere) means a solid line. Plumbed through the Renderer seam and
+ * scaled to device px at the single snap boundary (DESIGN.md §3, §4, §11).
+ */
+export type LineDash = number[];
+
+/**
+ * Optional separator line drawn between element rows (DESIGN.md §11). This is a
+ * "border" between lanes, not a background fill. Off by default so existing
+ * themes render unchanged.
+ */
+export interface RowSeparatorStyle {
+  enabled: boolean;
+  color: string;
+  width: number;
+  /** `[]` = solid. */
+  dash: LineDash;
+}
+
+/**
  * The complete set of stylable element properties (DESIGN.md §11). The same
  * shape is reused at every level of the resolution chain (theme default →
  * resolver → per-item `style`), so there is one definition of "what is
@@ -56,6 +77,8 @@ export interface TimelineData<TData = unknown> {
 export interface ElementStyle {
   lineColor: string;
   lineWidth: number;
+  /** Dash pattern for the element line; `[]` = solid (DESIGN.md §11). */
+  lineDash: LineDash;
   labelColor: string;
   /** CSS font shorthand, e.g. "12px Inter, sans-serif". */
   labelFont: string;
@@ -66,6 +89,8 @@ export interface ElementStyle {
 export interface EventStyle {
   arrowColor: string;
   arrowWidth: number;
+  /** Dash pattern for the arrow riser / self-loop; `[]` = solid. Arrowheads stay solid. */
+  arrowDash: LineDash;
   arrowheadSize: number;
   labelColor: string;
   labelFont: string;
@@ -77,19 +102,45 @@ export interface EventStyle {
 export interface Theme {
   background: string;
   gridlineColor: string;
+  /** Gridline stroke width in CSS px. */
+  gridlineWidth: number;
+  /** Gridline dash; `[]` = solid. */
+  gridlineDash: LineDash;
   headerTextColor: string;
   headerFont: string;
   /** Height of the (multi-row) time header in CSS px. */
   headerHeight: number;
+  /** Vertical centre of the major tick label, as a fraction of `headerHeight`. */
+  headerMajorTickRatio: number;
+  /** Vertical centre of the minor tick label, as a fraction of `headerHeight`. */
+  headerMinorTickRatio: number;
   rowHeight: number;
   rowGap: number;
   labelPadding: number;
+  /** Horizontal lead drawn before an element's first event, in CSS px. */
+  lineLeadPadding: number;
+  /** Gap between the start marker block and the line's left end, in CSS px. */
+  markerGap: number;
+  /** Gap between a riser/marker and its event label, in CSS px. */
+  eventLabelGap: number;
   /** Overlay colour for the hovered primitive (DESIGN.md §9). */
   hoverColor: string;
   /** Overlay colour for selected primitives' outlines (DESIGN.md §9). */
   selectionColor: string;
-  /** Colour of collapsed-event cluster markers and their counts (DESIGN.md §6). */
+  /** Extra stroke width added to a hovered primitive in the overlay, in CSS px. */
+  hoverWidthBonus: number;
+  /** Extra stroke width added to a selected primitive in the overlay, in CSS px. */
+  selectionWidthBonus: number;
+  /** Extra radius added to a hovered/selected node dot & arrowhead, in CSS px. */
+  emphasisRadiusBonus: number;
+  /** Colour of collapsed-event cluster markers (DESIGN.md §6). */
   clusterColor: string;
+  /** Colour of the cluster "×N" count label (defaults to `clusterColor`). */
+  clusterTextColor: string;
+  /** Extra radius a cluster marker gets over an ordinary node dot, in CSS px. */
+  clusterMarkerBonus: number;
+  /** Separator lines drawn between rows (off by default). */
+  rowSeparator: RowSeparatorStyle;
   /** Theme-level element defaults (base of the resolution chain). */
   element: ElementStyle;
   /** Theme-level event defaults (base of the resolution chain). */

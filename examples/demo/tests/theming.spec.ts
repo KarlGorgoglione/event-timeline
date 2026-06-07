@@ -88,3 +88,62 @@ test('theming + data-driven colours/labels render without errors (§11)', async 
 
   expect(errors).toEqual([]);
 });
+
+/** Hash of the base canvas pixels, so a re-render can be detected as a change. */
+async function canvasHash(
+  page: import('@playwright/test').Page,
+): Promise<number | null> {
+  return page.evaluate(() => {
+    const root = document.querySelector('[data-testid="timeline-root"]');
+    // First canvas is the base layer, where gridlines/separators/lines paint.
+    const canvas = root?.querySelector('canvas');
+    if (!(canvas instanceof HTMLCanvasElement) || canvas.width === 0) {
+      return null;
+    }
+    const ctx = canvas.getContext('2d');
+    if (ctx === null) return null;
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let hash = 0;
+    // Sample every 64th byte: cheap, but sensitive to dashes/separators changing
+    // which pixels are painted.
+    for (let i = 0; i < data.length; i += 64)
+      hash = (hash + (data[i] ?? 0)) | 0;
+    return hash;
+  });
+}
+
+test('decorations toggle dashes lines/gridlines and draws row separators (§11)', async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => {
+    if (m.type() === 'error') errors.push(m.text());
+  });
+
+  await page.goto('/');
+  await expect(page.getByTestId('timeline-root')).toBeVisible();
+  await expect
+    .poll(async () => (await canvasStats(page))?.avgLum ?? 999, {
+      timeout: 5000,
+    })
+    .toBeLessThan(60);
+
+  const before = await canvasHash(page);
+  expect(before).not.toBeNull();
+
+  // Decor on → dashed element lines + arrows, dashed gridlines, and row
+  // separators change which pixels are painted, so the canvas hash shifts.
+  await page.getByTestId('toggle-decorations').click();
+  await expect
+    .poll(async () => await canvasHash(page), { timeout: 5000 })
+    .not.toBe(before);
+
+  // Decor off → restores the solid render.
+  await page.getByTestId('toggle-decorations').click();
+  await expect
+    .poll(async () => await canvasHash(page), { timeout: 5000 })
+    .toBe(before);
+
+  expect(errors).toEqual([]);
+});

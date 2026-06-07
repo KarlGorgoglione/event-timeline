@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { defaultTheme } from '../engine/theme';
 import { computeRowLayout } from '../layout/positions';
 import type { Extent } from '../model/extent';
-import type { TimelineElement } from '../model/types';
+import type { TimelineElement, Theme } from '../model/types';
 import { Camera, type RowMetrics, type Viewport } from '../scale/camera';
 import { buildElementLines, markerReserveLeftPx } from './elementLines';
 import { bySourceTargetColumn } from '../cluster/strategies';
@@ -24,8 +24,10 @@ function ctxFor(
     resolveIcon?: ResolveIcon;
     styleResolver?: ElementStyleResolver;
     formatElementLabel?: (element: TimelineElement) => string;
+    theme?: Theme;
   } = {},
 ): BuildContext {
+  const theme = opts.theme ?? defaultTheme;
   const byId = new Map(elements.map((e) => [e.id, e]));
   const data: DataAccess = {
     getEvents: () => [],
@@ -42,7 +44,7 @@ function ctxFor(
     ),
     data,
     viewport,
-    theme: defaultTheme,
+    theme,
     band: opts.band ?? { firstRow: 0, lastRow: elements.length - 1 },
     resolveIcon: opts.resolveIcon ?? (() => ({ kind: 'none' })),
     lod: { eventLabelMinPxPerMs: 0 },
@@ -53,13 +55,9 @@ function ctxFor(
     },
     // §11 resolution mirrors the engine's binding (theme → resolver → .style).
     resolveElementStyle: (element) =>
-      overlayStyle(
-        defaultTheme.element,
-        opts.styleResolver?.(element),
-        element.style,
-      ),
+      overlayStyle(theme.element, opts.styleResolver?.(element), element.style),
     resolveEventStyle: (event) =>
-      overlayStyle(defaultTheme.event, undefined, event.style),
+      overlayStyle(theme.event, undefined, event.style),
     formatElementLabel:
       opts.formatElementLabel ?? ((element) => element.label ?? element.id),
     formatEventLabel: (event) => event.label,
@@ -261,5 +259,25 @@ describe('buildElementLines styling & formatting (§11)', () => {
       }),
     );
     expect(elementLabel(r)?.text).toBe('ACME');
+  });
+
+  it('carries a resolved line dash into the line batch (§11 border style)', () => {
+    const r = buildElementLines(
+      ctxFor([{ id: 'a', label: 'A', style: { lineDash: [4, 2] } }], extents),
+    );
+    expect(r.lines[0]?.dash).toEqual([4, 2]);
+  });
+
+  it('honours custom theme spacing (lineLeadPadding shifts the line start)', () => {
+    const theme: Theme = {
+      ...defaultTheme,
+      lineLeadPadding: 40,
+      markerGap: 20,
+    };
+    const r = buildElementLines(
+      ctxFor([{ id: 'a', label: 'A' }], extents, { theme }),
+    );
+    // lineStart 100 − leadPad 40 = 60 (vs the default 88 with leadPad 12).
+    expect(r.lines[0]?.segments[0]?.x1).toBeCloseTo(60);
   });
 });

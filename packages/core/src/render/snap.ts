@@ -22,12 +22,29 @@ import type {
   TextBatch,
 } from './types';
 
+/**
+ * Scale a CSS-px dash pattern to device px (length along the path — not snapped
+ * to integers, so sub-pixel dashes stay drift-free). Returns `undefined` for an
+ * empty/omitted pattern so the renderer draws a solid line. This is the single
+ * dash-scaling rule, reused by `snapLines` and by the engine's gridlines (which
+ * build directly in device px and so call it inline).
+ */
+export function scaleDash(
+  dash: number[] | undefined,
+  dpr: number,
+): number[] | undefined {
+  return dash !== undefined && dash.length > 0
+    ? dash.map((d) => d * dpr)
+    : undefined;
+}
+
 export function snapLines(spec: LineSpec, dpr: number): LineBatch {
   const width = Math.max(1, snapDevice(spec.width, dpr));
   const off = hairlineOffset(width);
   return {
     color: spec.color,
     width,
+    dash: scaleDash(spec.dash, dpr),
     segments: spec.segments.map((s) => ({
       x1: snapDevice(s.x1, dpr) + off,
       y1: snapDevice(s.y1, dpr) + off,

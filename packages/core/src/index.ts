@@ -15,6 +15,8 @@ export type {
   TimelineData,
   ElementStyle,
   EventStyle,
+  LineDash,
+  RowSeparatorStyle,
   Theme,
 } from './model/types';
 
