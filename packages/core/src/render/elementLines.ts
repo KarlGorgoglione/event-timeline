@@ -21,6 +21,15 @@ import type {
 
 /** CSS px of line drawn before an element's first event — the lead gap (§1). */
 export const LINE_LEAD_PAD_PX = 12;
+/**
+ * CSS px of slack each side of the viewport that an element line's drawn extent
+ * is clamped to. A line spans its element's full extent in screen-x, which at
+ * high zoom is millions of px wide; stroking that and rasterizing it into the
+ * 64px hit grid cell-by-cell makes the framerate fall *as you zoom in* (§13).
+ * The off-screen portion is invisible and un-hittable (the pointer is always in
+ * the viewport), and the line is horizontal, so clamping changes nothing visible.
+ */
+export const OFFSCREEN_LINE_MARGIN_PX = 128;
 /** Gap between the start marker (icon/label block) and the line's left end. */
 const MARKER_GAP_PX = 8;
 /** Vertical gap between the stacked icon and the label beneath it. */
@@ -101,10 +110,18 @@ export function buildElementLines<TData>(
     const lineColor = style.lineColor;
     const lineWidth = style.lineWidth;
     const x1 = lineStartX - LINE_LEAD_PAD_PX;
+    // Clamp the *drawn* extent to the viewport (+ slack). The start marker below
+    // still keys off the true `x1`, so its sticky-left fallback is unchanged —
+    // only the off-screen, invisible run of the horizontal line is trimmed (§13).
+    const drawX1 = Math.max(x1, -OFFSCREEN_LINE_MARGIN_PX);
+    const drawX2 = Math.min(
+      lineEndX,
+      viewport.cssWidth + OFFSCREEN_LINE_MARGIN_PX,
+    );
     lineBatch(lines, lineColor, lineWidth).segments.push({
-      x1,
+      x1: drawX1,
       y1: rowCenterY,
-      x2: lineEndX,
+      x2: drawX2,
       y2: rowCenterY,
     });
     if (element !== undefined) {
@@ -112,8 +129,8 @@ export function buildElementLines<TData>(
         kind: 'element',
         element,
         y: rowCenterY,
-        x1,
-        x2: lineEndX,
+        x1: drawX1,
+        x2: drawX2,
         width: lineWidth,
       });
     }

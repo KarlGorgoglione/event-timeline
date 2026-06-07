@@ -37,6 +37,8 @@ interface CtxOpts {
   clustering?: Partial<ClusteringConfig>;
   styleResolver?: EventStyleResolver;
   formatEventLabel?: (event: TimelineEvent) => string | undefined;
+  /** Override the row set (default: the 10 module rows r0..r9). */
+  rowIds?: string[];
 }
 
 function ctxFor(
@@ -44,6 +46,7 @@ function ctxFor(
   band: RowBand,
   opts: CtxOpts = {},
 ): BuildContext {
+  const rows = opts.rowIds ?? rowIds;
   const data: DataAccess = {
     getEvents: () => events,
     // Mirror the store: the temporal-index slice is time-sorted, which the
@@ -60,7 +63,7 @@ function ctxFor(
     camera:
       opts.camera ??
       new Camera(metrics, { originTime: 0, pxPerMs: 1, scrollY: 0 }),
-    rowLayout: computeRowLayout(rowIds, metrics),
+    rowLayout: computeRowLayout(rows, metrics),
     data,
     viewport,
     theme: defaultTheme,
@@ -156,6 +159,33 @@ describe('buildArrows geometry (§1)', () => {
     const x = ctx.camera.timeToScreenX(100);
     const bulged = segs.some(
       (s) => s.x2 > x + 0.5 && Math.abs(s.y2 - rowCenter(2)) < 6,
+    );
+    expect(bulged).toBe(true);
+  });
+
+  it('hops over a VISIBLE intermediary line even when the riser spans far more rows than fit on screen (§16)', () => {
+    // Regression: a tall riser (source/target tens of rows apart, both far off
+    // screen) still crosses element lines *within the visible band* and must hop
+    // over them. The perf guard must key on the visible span, not the full one.
+    const manyRows = Array.from({ length: 60 }, (_, i) => `r${i}`);
+    // Only rows r28..r32 are on screen; the riser runs r0 -> r58 (span 58).
+    const band: RowBand = { firstRow: 28, lastRow: 32 };
+    const ctx = ctxFor(
+      [ev({ sourceId: 'r0', targetId: 'r58', time: 100 })],
+      band,
+      {
+        rowIds: manyRows,
+      },
+    );
+    // r30 sits inside the visible band and its line spans the event time -> hop.
+    ctx.data.getExtent = (id) =>
+      id === 'r30' ? { minTime: 0, maxTime: 200 } : undefined;
+    const r = buildArrows(ctx);
+    const segs = r.lines[0]!.segments;
+    expect(segs.length).toBeGreaterThan(1);
+    const x = ctx.camera.timeToScreenX(100);
+    const bulged = segs.some(
+      (s) => s.x2 > x + 0.5 && Math.abs(s.y2 - rowCenter(30)) < 6,
     );
     expect(bulged).toBe(true);
   });
