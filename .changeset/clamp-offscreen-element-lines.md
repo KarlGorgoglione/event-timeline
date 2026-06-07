@@ -2,7 +2,7 @@
 '@event-timeline/core': patch
 ---
 
-Fix framerate degrading as you zoom *in* (worst when fully zoomed in, recovering
+Fix framerate degrading as you zoom _in_ (worst when fully zoomed in, recovering
 as you zoom out). Each element line was drawn — and rasterized into the 64px
 hit-test grid cell-by-cell — across its full extent in screen-x, which grows with
 zoom: at maximum zoom a line spans ~1.5M px, so a single line registered in
