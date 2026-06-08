@@ -1,0 +1,348 @@
+/* Floating glass customization panel. Hand-written, no libraries: one set of
+   CSS variables drives the surface, native form controls are restyled, and the
+   sections collapse via native <details>.
+
+   The chrome is intentionally a fixed dark glass, independent of the timeline
+   theme the panel edits. It is a tool overlay (like a dev-tools / design
+   inspector), so it must read identically while you switch the canvas between
+   the Light/Dark/High-contrast presets — restyling the controls as you edit the
+   theme they control would be disorienting and hurt contrast mid-edit. The
+   translucent dark surface + blur + shadow keeps text legible over both light
+   and dark canvases. */
+
+.etd-panel {
+  --etd-surface: 22, 27, 34;
+  --etd-border: rgba(255, 255, 255, 0.12);
+  --etd-text: #e6e6e6;
+  --etd-muted: #9aa4b2;
+  --etd-accent: #4fc3f7;
+  --etd-track: rgba(255, 255, 255, 0.14);
+  --etd-radius: 14px;
+
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 320px;
+  max-height: calc(100% - 24px);
+  display: flex;
+  flex-direction: column;
+  z-index: 10;
+
+  color: var(--etd-text);
+  font:
+    12px/1.4 system-ui,
+    sans-serif;
+  background: rgba(var(--etd-surface), 0.72);
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  border: 1px solid var(--etd-border);
+  border-radius: var(--etd-radius);
+  box-shadow:
+    0 8px 30px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.etd-panel--collapsed {
+  width: auto;
+  max-height: none;
+  padding: 4px;
+}
+
+/* Header ------------------------------------------------------------------ */
+.etd-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--etd-border);
+}
+
+.etd-panel__title {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.etd-panel__toggle {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--etd-border);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--etd-text);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.etd-panel__toggle:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* Presets ----------------------------------------------------------------- */
+.etd-panel__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--etd-border);
+}
+
+.etd-chip {
+  padding: 4px 10px;
+  border: 1px solid var(--etd-border);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--etd-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.etd-chip:hover {
+  background: rgba(79, 195, 247, 0.18);
+  border-color: var(--etd-accent);
+}
+.etd-chip--reset {
+  margin-left: auto;
+  color: var(--etd-muted);
+}
+
+/* Body / sections --------------------------------------------------------- */
+.etd-panel__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.etd-section {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.etd-section__summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 12px;
+  font-weight: 600;
+  color: var(--etd-text);
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.etd-section__summary::-webkit-details-marker {
+  display: none;
+}
+.etd-section__summary:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.etd-section__chevron {
+  display: inline-block;
+  color: var(--etd-muted);
+  transition: transform 0.15s ease;
+}
+.etd-section[open] > .etd-section__summary .etd-section__chevron {
+  transform: rotate(90deg);
+}
+.etd-section__body {
+  padding: 2px 12px 10px;
+}
+
+/* Field row --------------------------------------------------------------- */
+.etd-field {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+.etd-field__label {
+  color: var(--etd-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.etd-field__control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+/* Color ------------------------------------------------------------------- */
+.etd-color {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.etd-color__swatch {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--etd-border);
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+}
+.etd-color__swatch::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+.etd-color__swatch::-webkit-color-swatch {
+  border: none;
+  border-radius: 4px;
+}
+.etd-color__hex {
+  width: 92px;
+}
+
+/* Inputs (shared) --------------------------------------------------------- */
+.etd-color__hex,
+.etd-slider__num,
+.etd-font__size,
+.etd-select {
+  height: 24px;
+  padding: 0 6px;
+  color: var(--etd-text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--etd-border);
+  border-radius: 6px;
+  font: inherit;
+}
+.etd-color__hex {
+  font-family: ui-monospace, monospace;
+}
+.etd-slider__num,
+.etd-font__size {
+  width: 54px;
+  font-variant-numeric: tabular-nums;
+}
+.etd-select {
+  max-width: 160px;
+  cursor: pointer;
+}
+input:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--etd-accent);
+  outline-offset: 1px;
+}
+
+/* Slider ------------------------------------------------------------------ */
+.etd-slider {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.etd-slider__range {
+  width: 96px;
+  height: 4px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: var(--etd-track);
+  border-radius: 999px;
+  cursor: pointer;
+}
+.etd-slider__range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--etd-accent);
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  cursor: pointer;
+}
+.etd-slider__range::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.35);
+  border-radius: 50%;
+  background: var(--etd-accent);
+  cursor: pointer;
+}
+.etd-slider__unit {
+  width: 38px;
+  color: var(--etd-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Switch ------------------------------------------------------------------ */
+.etd-switch {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--etd-track);
+  border: 1px solid var(--etd-border);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.etd-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+.etd-switch:checked {
+  background: var(--etd-accent);
+}
+.etd-switch:checked::after {
+  transform: translateX(16px);
+}
+
+/* Font -------------------------------------------------------------------- */
+.etd-font {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Button ------------------------------------------------------------------ */
+.etd-btn {
+  height: 24px;
+  padding: 0 12px;
+  color: var(--etd-text);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--etd-border);
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+.etd-btn:hover {
+  background: rgba(79, 195, 247, 0.18);
+  border-color: var(--etd-accent);
+}
+
+/* Status strip ------------------------------------------------------------ */
+.etd-panel__status {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--etd-border);
+  color: var(--etd-muted);
+  font-variant-numeric: tabular-nums;
+}
+.etd-panel__status span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Respect a user's reduced-motion preference: drop the chevron/thumb/hover
+   transitions, keeping the panel fully functional without animation. */
+@media (prefers-reduced-motion: reduce) {
+  .etd-chip,
+  .etd-section__chevron,
+  .etd-switch,
+  .etd-switch::after {
+    transition: none;
+  }
+}

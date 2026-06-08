@@ -57,6 +57,7 @@ export interface TimelineHandle<TData = unknown> {
   fit(): void;
   panToTime(t: Time): void;
   zoomToRange(start: Time, end: Time): void;
+  setScrollY(scrollY: number): void;
   select(ids: string[]): void;
   getViewport(): TimelineEventMap<TData>['viewportChange'];
   resize(cssW: number, cssH: number, dpr: number): void;
@@ -134,6 +135,7 @@ function TimelineInner<TData>(
       fit: () => engineRef.current?.fit(),
       panToTime: (t) => engineRef.current?.panToTime(t),
       zoomToRange: (s, e) => engineRef.current?.zoomToRange(s, e),
+      setScrollY: (y) => engineRef.current?.setScrollY(y),
       select: (ids) => engineRef.current?.select(ids),
       getViewport: () => engineRef.current?.getViewport() ?? EMPTY_VIEWPORT,
       resize: (w, h, dpr) => engineRef.current?.resize(w, h, dpr),

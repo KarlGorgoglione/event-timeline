@@ -456,6 +456,20 @@ export class TimelineEngine<TData = unknown> {
   }
 
   /**
+   * Set the vertical scroll offset in CSS px (DESIGN.md §3, §12), clamped to the
+   * content height. Pairs with {@link getViewport} and {@link zoomToRange} so a
+   * host that must recreate the engine (e.g. the React binding rebuilding on a
+   * theme/options change, §12) can restore the prior view instead of letting the
+   * fresh engine snap back to fit.
+   */
+  setScrollY(scrollY: number): void {
+    this.camera.setScrollY(scrollY);
+    this.camera.clampScrollY(this.rowLayout.contentHeight, this.viewport);
+    this.scheduler.markDirty('base');
+    this.emitViewportChange();
+  }
+
+  /**
    * Replace the selection imperatively (DESIGN.md §9, §12). Ids are the
    * `kind:id` composites produced by hit-testing (see {@link hitId}), so an
    * element and an event sharing a raw id stay distinct. A no-op replacement

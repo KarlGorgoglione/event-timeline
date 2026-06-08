@@ -16,7 +16,8 @@ test('renders 50k events with clusters and no errors', async ({ page }) => {
 
   await page.goto('/');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
-  await page.getByTestId('toggle-50k').click(); // build + mount the 50k dataset
+  // Build + mount the 50k dataset via the panel's dataset selector.
+  await page.getByLabel('Dataset').selectOption('synthetic50k');
 
   // The cluster marker colour (#d29922 = rgb(210,153,34)) appears in the content
   // band only when dense events collapse — a deterministic render signal.

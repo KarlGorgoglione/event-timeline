@@ -16,7 +16,8 @@ test('renders 10k events with no errors and a non-blank canvas', async ({
 
   await page.goto('/');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
-  await page.getByTestId('toggle-dataset').click(); // swap in the 10k dataset
+  // Swap in the 10k dataset via the panel's dataset selector.
+  await page.getByLabel('Dataset').selectOption('synthetic10k');
 
   // Poll the base canvas until content (anything not the #161b22 background)
   // appears in the central content band, below the header.

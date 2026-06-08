@@ -1,92 +1,33 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   Timeline,
-  barycenter,
-  byFirstEvent,
-  defaultTheme,
-  explicit,
-  type Formatters,
   type HitResult,
-  type LayoutStrategy,
-  type StyleResolvers,
-  type Theme,
   type TimelineHandle,
-  type TimelineOptions,
 } from '@event-timeline/react';
 import { demoData } from './fixture';
 import { makeStreamBatch, makeSynthetic, type DemoDatum } from './synthetic';
 import { makeAmlScenario } from './scenario';
-
-const LAYOUT_NAMES = ['byFirstEvent', 'barycenter', 'explicit'] as const;
-type LayoutName = (typeof LAYOUT_NAMES)[number];
-const LAYOUTS: Record<LayoutName, LayoutStrategy> = {
-  byFirstEvent,
-  barycenter,
-  explicit,
-};
+import { useDemoConfig } from './panel/useDemoConfig';
+import {
+  buildFormatters,
+  buildOptions,
+  buildResolvers,
+  buildTheme,
+} from './panel/buildProps';
+import { Panel } from './panel/Panel';
 
 /** Events appended per streaming tick, and the tick interval (Phase 7, §10). */
 const STREAM_BATCH = 12;
 const STREAM_INTERVAL_MS = 250;
 
-// --- Phase 6 customisation (§11) ---------------------------------------------
-
-/** A light theme as a partial override; `resolveTheme` merges it over the dark
- * default. Demonstrates the host-driven theming surface (no preset shipped in
- * core, per the chosen demo-only approach). */
-const lightTheme: Partial<Theme> = {
-  background: '#f7f8fa',
-  gridlineColor: 'rgba(0,0,0,0.10)',
-  headerTextColor: '#5a6472',
-  hoverColor: '#d97706',
-  selectionColor: '#2563eb',
-  clusterColor: '#b45309',
-  // Spread the defaults so new stylable fields (e.g. the §11 label box) stay
-  // complete without restating every key here.
-  element: {
-    ...defaultTheme.element,
-    lineColor: '#2563eb',
-    labelColor: '#1f2933',
-  },
-  event: {
-    ...defaultTheme.event,
-    arrowColor: '#52606d',
-    labelColor: '#1f2933',
-  },
-};
-
-/** Parametrization demo (§11): layer dashed lines/arrows, dashed gridlines, and
- * row separators over whatever base theme is active. Returns a single composed
- * `Partial<Theme>` (the React `theme` prop is one partial — no chaining), so the
- * decoration deltas are merged into the base's nested style objects here. */
-function withDecorations(base: Partial<Theme>): Partial<Theme> {
-  return {
-    ...base,
-    gridlineDash: [2, 4],
-    rowSeparator: {
-      enabled: true,
-      color: 'rgba(127,127,127,0.18)',
-      width: 1,
-      dash: [],
-    },
-    element: { ...defaultTheme.element, ...base.element, lineDash: [6, 3] },
-    event: { ...defaultTheme.event, ...base.event, arrowDash: [3, 3] },
-  };
-}
-
-/** Five-colour palette for the data-driven style resolvers. Bucket 0 is a muted
- * grey so AML-scenario background activity recedes and tagged patterns pop
- * (buckets 1–4 map to the four patterns); the other datasets use 0–4 as before. */
-const PALETTE = ['#6b7280', '#98c379', '#61afef', '#c678dd', '#e5c07b'];
-
-/** Maps a `DemoDatum` category bucket to a palette colour (data-driven, §11).
- * Both datasets carry the payload, so the resolvers read it directly; an absent
- * category falls back to bucket 0. */
-function paletteColor(category = 0): string {
-  return PALETTE[category % PALETTE.length] as string;
-}
-
-/** Short human label for the status bar (mirrors the default tooltip content). */
+/** Short human label for the status strip (mirrors the default tooltip content). */
 function describeHit(hit: HitResult<DemoDatum> | null): string {
   if (hit === null) return '—';
   switch (hit.kind) {
@@ -108,38 +49,26 @@ function describeHit(hit: HitResult<DemoDatum> | null): string {
 }
 
 /**
- * Phase 6 demo: theming & customisation (§11) on top of Phase 4 scale/LOD. The
- * "theme" toggle swaps a light `Partial<Theme>` over the dark default; "colours"
- * turns on data-driven style resolvers (lines/arrows coloured by category); and
- * "labels" turns on formatters (upper-cased element labels, prefixed events).
- * Underneath: the temporal index culls by binary search, dense events collapse
- * into "×N" cluster markers, and per-event labels appear past the LOD threshold.
- * "Fit" reframes; "10k"/"50k" swap in synthetic datasets (drag to pan, ctrl/⌘+
- * wheel to zoom). "AML" swaps in a ~100-entity client/counterparty scenario with
- * four labelled transaction-monitoring patterns (structuring, circular,
- * pass-through, fan-out); enable "colours" to paint each flow by its pattern and
- * hover a "⚠" row/arrow to see the pattern named in the status bar.
+ * The demo: a Canvas-2D timeline plus a floating glass customization panel that
+ * drives the full §11 look-and-feel surface. All editable state lives in a
+ * single `DemoConfig` (see `panel/config.ts`); pure builders turn its `theme`
+ * and `options` slices into the memoised engine props, and `useDeferredValue`
+ * keeps slider drags smooth by letting the (engine-rebuilding) prop updates lag
+ * the input under load — the §12 referential-stability contract holds because
+ * each prop is memoised on its own slice.
  */
 export function App() {
   const ref = useRef<TimelineHandle<DemoDatum>>(null);
-  const [big, setBig] = useState(false);
-  const [huge, setHuge] = useState(false);
-  const [aml, setAml] = useState(false);
-  const [layoutName, setLayoutName] = useState<LayoutName>('byFirstEvent');
-  const [themed, setThemed] = useState(false);
-  const [decorated, setDecorated] = useState(false);
-  const [coloured, setColoured] = useState(false);
-  const [labelled, setLabelled] = useState(false);
-  const [sourceNodeLabels, setSourceNodeLabels] = useState(false);
+  const { config, bind, apply } = useDemoConfig();
+
   const [hover, setHover] = useState<HitResult<DemoDatum> | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [viewport, setViewport] = useState({ pxPerMs: 0, scrollY: 0 });
-  const [streaming, setStreaming] = useState(false);
   const [streamCount, setStreamCount] = useState(0);
   // Latest visible time window — streamed batches land inside it so new events
   // appear wherever the user is looking. A ref avoids re-running the interval
-  // effect on every pan/zoom. The counter keeps streamed ids unique across
-  // dataset toggles (a toggle's setData clears prior streamed events).
+  // effect on every pan/zoom; the counter keeps streamed ids unique across
+  // dataset switches (a switch's setData clears prior streamed events).
   const viewRef = useRef<[number, number]>([0, 0]);
   const streamCounterRef = useRef(0);
 
@@ -159,60 +88,27 @@ export function App() {
     },
     [],
   );
-  // A new `options` reference (on layout change) re-creates the engine and
-  // re-runs layout (§12 referential-stability contract).
-  const options = useMemo<TimelineOptions>(
-    () => ({
-      multiSelect: true,
-      layout: LAYOUTS[layoutName],
-      // Placement only moves the label; its box style (below) shows in either mode.
-      eventLabel: { placement: sourceNodeLabels ? 'sourceNode' : 'midpoint' },
-    }),
-    [layoutName, sourceNodeLabels],
+
+  // Engine props, each memoised on its own config slice so editing a colour
+  // never churns `options` and vice versa (§12). Theme/options are deferred so
+  // rapid edits don't rebuild the engine faster than it can keep up at 50k.
+  const deferredTheme = useDeferredValue(config.theme);
+  const deferredOptions = useDeferredValue(config.options);
+  const theme = useMemo(() => buildTheme(deferredTheme), [deferredTheme]);
+  const options = useMemo(
+    () => buildOptions(deferredOptions),
+    [deferredOptions],
+  );
+  const styleResolvers = useMemo(
+    () => buildResolvers(config.resolvers),
+    [config.resolvers],
+  );
+  const formatters = useMemo(
+    () => buildFormatters(config.formatters),
+    [config.formatters],
   );
 
-  // Phase 6 props, memoized so the engine isn't re-created every render (§12).
-  // Each is undefined when its toggle is off, so the engine falls back to the
-  // dark theme / per-item `.style` / raw labels respectively.
-  const theme = useMemo<Partial<Theme> | undefined>(() => {
-    const base = themed ? lightTheme : {};
-    if (decorated) return withDecorations(base);
-    return themed ? lightTheme : undefined;
-  }, [themed, decorated]);
-  const styleResolvers = useMemo<StyleResolvers<DemoDatum> | undefined>(
-    () =>
-      coloured
-        ? {
-            element: (e) => ({ lineColor: paletteColor(e.data?.category) }),
-            event: (e) => {
-              const colour = paletteColor(e.data?.category);
-              // Tint the label box per category. As box styling is independent of
-              // placement, this shows the same in both midpoint and source-node
-              // modes — the §11 per-event resolver path, end to end.
-              return {
-                arrowColor: colour,
-                labelBoxBackground: 'rgba(0, 0, 0, 0.55)',
-                labelBoxBorderColor: colour,
-                labelBoxBorderWidth: 1,
-              };
-            },
-          }
-        : undefined,
-    [coloured],
-  );
-  const formatters = useMemo<Formatters<DemoDatum> | undefined>(
-    () =>
-      labelled
-        ? {
-            elementLabel: (e) => (e.label ?? e.id).toUpperCase(),
-            eventLabel: (e) => `» ${e.label ?? e.id}`,
-          }
-        : undefined,
-    [labelled],
-  );
-
-  // Custom tooltip: events show their UTC date under the label (§9, §12). Stable
-  // so the Tooltip subtree isn't re-created each render.
+  // Custom tooltip: events show their UTC date under the label (§9, §12).
   const renderTooltip = useCallback((hit: HitResult<DemoDatum>) => {
     switch (hit.kind) {
       case 'event': {
@@ -233,28 +129,38 @@ export function App() {
     }
   }, []);
 
-  // Memoized so the referential-stability contract holds (§12): a stable `data`
-  // reference avoids a full setData on every render. The 10k set is built once;
-  // the 50k set is built lazily the first time it is shown (§15 acceptance).
+  // Datasets are memoised for a stable `data` reference (§12): the 10k set is
+  // built once, the 50k set lazily the first time it is selected (§15).
   const synthetic = useMemo(() => makeSynthetic(), []);
   const synthetic50k = useMemo(
-    () => (huge ? makeSynthetic(50_000, 400, 2) : null),
-    [huge],
+    () =>
+      config.dataset === 'synthetic50k' ? makeSynthetic(50_000, 400, 2) : null,
+    [config.dataset],
   );
   const amlData = useMemo(() => makeAmlScenario(), []);
-  const data = aml ? amlData : (synthetic50k ?? (big ? synthetic : demoData));
+  const data = useMemo(() => {
+    switch (config.dataset) {
+      case 'aml':
+        return amlData;
+      case 'synthetic50k':
+        return synthetic50k ?? demoData;
+      case 'synthetic10k':
+        return synthetic;
+      default:
+        return demoData;
+    }
+  }, [config.dataset, synthetic, synthetic50k, amlData]);
 
-  // A dataset toggle's prop `setData` clears prior streamed events, so reset the
-  // displayed count to match (and keep streamed ids unique via the counter ref).
+  // A dataset switch's prop `setData` clears prior streamed events, so reset the
+  // displayed count to match (ids stay unique via the counter ref).
   useEffect(() => {
     setStreamCount(0);
   }, [data]);
 
   // Phase 7 streaming (§10): while on, append a small batch via the imperative
-  // `addEvents` each tick — no full `setData`, so existing rows stay put and the
-  // base layer just redraws the wider extent. Pan/zoom stays interactive.
+  // `addEvents` each tick — no full `setData`, so existing rows stay put.
   useEffect(() => {
-    if (!streaming) return;
+    if (!config.streaming) return;
     const id = setInterval(() => {
       const handle = ref.current;
       const [tStart, tEnd] = viewRef.current;
@@ -271,155 +177,42 @@ export function App() {
       setStreamCount((n) => n + batch.length);
     }, STREAM_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [streaming, data]);
+  }, [config.streaming, data]);
 
   return (
     <main
       style={{
         position: 'fixed',
         inset: 0,
-        display: 'flex',
-        flexDirection: 'column',
+        background: config.theme.background,
       }}
     >
-      <header
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 12,
-          padding: '8px 12px',
+      <Timeline<DemoDatum>
+        ref={ref}
+        data={data}
+        theme={theme}
+        options={options}
+        styleResolvers={styleResolvers}
+        formatters={formatters}
+        renderTooltip={renderTooltip}
+        onHover={onHover}
+        onSelectionChange={onSelectionChange}
+        onViewportChange={onViewportChange}
+        style={{ background: config.theme.background }}
+      />
+      <Panel
+        config={config}
+        bind={bind}
+        apply={apply}
+        onFit={() => ref.current?.fit()}
+        status={{
+          hover: describeHit(hover),
+          selected,
+          pxPerMs: viewport.pxPerMs,
+          scrollY: viewport.scrollY,
+          streamed: streamCount,
         }}
-      >
-        <h1 style={{ margin: 0, font: '600 14px system-ui' }}>
-          event-timeline · demo
-        </h1>
-        <button
-          type="button"
-          onClick={() => ref.current?.fit()}
-          style={{ font: '12px system-ui' }}
-        >
-          Fit
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-dataset"
-          onClick={() => setBig((v) => !v)}
-          style={{ font: '12px system-ui' }}
-        >
-          {big ? 'Sample' : '10k'}
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-50k"
-          onClick={() => setHuge((v) => !v)}
-          style={{ font: '12px system-ui' }}
-        >
-          {huge ? 'Sample' : '50k'}
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-aml"
-          onClick={() => setAml((v) => !v)}
-          style={{ font: '12px system-ui' }}
-        >
-          {aml ? 'AML ✓' : 'AML'}
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-layout"
-          onClick={() =>
-            setLayoutName((name) => {
-              const next =
-                (LAYOUT_NAMES.indexOf(name) + 1) % LAYOUT_NAMES.length;
-              return LAYOUT_NAMES[next]!;
-            })
-          }
-          style={{ font: '12px system-ui' }}
-        >
-          layout: {layoutName}
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-theme"
-          onClick={() => setThemed((v) => !v)}
-          style={{ font: '12px system-ui' }}
-        >
-          theme: {themed ? 'light' : 'dark'}
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-decorations"
-          onClick={() => setDecorated((v) => !v)}
-          style={{ font: '12px system-ui' }}
-        >
-          decor: {decorated ? 'on' : 'off'}
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-resolvers"
-          onClick={() => setColoured((v) => !v)}
-          style={{ font: '12px system-ui' }}
-        >
-          colours: {coloured ? 'on' : 'off'}
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-formatters"
-          onClick={() => setLabelled((v) => !v)}
-          style={{ font: '12px system-ui' }}
-        >
-          labels: {labelled ? 'on' : 'off'}
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-source-node-labels"
-          onClick={() => setSourceNodeLabels((v) => !v)}
-          style={{ font: '12px system-ui' }}
-        >
-          label placement: {sourceNodeLabels ? 'source node' : 'midpoint'}
-        </button>
-        <button
-          type="button"
-          data-testid="toggle-stream"
-          onClick={() => setStreaming((v) => !v)}
-          style={{ font: '12px system-ui' }}
-        >
-          {streaming ? '■ Stop stream' : '▶ Stream'}
-        </button>
-      </header>
-      <div style={{ flex: 1, minHeight: 0 }}>
-        <Timeline<DemoDatum>
-          ref={ref}
-          data={data}
-          theme={theme}
-          options={options}
-          styleResolvers={styleResolvers}
-          formatters={formatters}
-          renderTooltip={renderTooltip}
-          onHover={onHover}
-          onSelectionChange={onSelectionChange}
-          onViewportChange={onViewportChange}
-          style={{ background: themed ? lightTheme.background : '#161b22' }}
-        />
-      </div>
-      <footer
-        style={{
-          display: 'flex',
-          gap: 16,
-          padding: '6px 12px',
-          font: '12px system-ui',
-          color: '#9aa4b2',
-          borderTop: '1px solid rgba(255,255,255,0.08)',
-        }}
-      >
-        <span data-testid="status-hover">hover: {describeHit(hover)}</span>
-        <span data-testid="status-selected">
-          selected: {selected.length === 0 ? '—' : selected.join(', ')}
-        </span>
-        <span data-testid="status-pxperms">pxPerMs: {viewport.pxPerMs}</span>
-        <span data-testid="status-scrolly">scrollY: {viewport.scrollY}</span>
-        <span data-testid="status-streamed">streamed: {streamCount}</span>
-      </footer>
+      />
     </main>
   );
 }

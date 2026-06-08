@@ -14,6 +14,10 @@ test.describe('golden renders (§14)', () => {
     await page.goto('/');
     await expect(page.getByTestId('timeline-root')).toBeVisible();
     await page.getByRole('button', { name: 'Fit' }).click();
+    // Collapse the panel so it doesn't overlay the canvas in the screenshot.
+    await page
+      .getByRole('button', { name: 'Collapse customization panel' })
+      .click();
 
     await expect(page.getByTestId('timeline-root')).toHaveScreenshot(
       'fixture-fit.png',
@@ -24,9 +28,14 @@ test.describe('golden renders (§14)', () => {
   test('AML scenario with data-driven colours', async ({ page }) => {
     await page.goto('/');
     await expect(page.getByTestId('timeline-root')).toBeVisible();
-    await page.getByTestId('toggle-aml').click();
-    await page.getByTestId('toggle-resolvers').click(); // colour by pattern
+    await page.getByLabel('Dataset').selectOption('aml');
+    // Colour by pattern via the data-driven resolvers toggle (in "Data hooks").
+    await page.getByText('Data hooks').click();
+    await page.getByRole('switch', { name: 'Data-driven colours' }).click();
     await page.getByRole('button', { name: 'Fit' }).click();
+    await page
+      .getByRole('button', { name: 'Collapse customization panel' })
+      .click();
 
     await expect(page.getByTestId('timeline-root')).toHaveScreenshot(
       'aml-colours.png',

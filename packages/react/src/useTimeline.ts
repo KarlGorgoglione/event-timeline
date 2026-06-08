@@ -76,6 +76,14 @@ export function useTimeline<TData>(
   const dataRef = useRef(data);
   dataRef.current = data;
   const appliedData = useRef<TimelineData<TData> | undefined>(undefined);
+  // Camera snapshot carried across an engine rebuild (§12). The lifecycle effect
+  // below re-creates the engine on any theme/options/resolvers/formatters
+  // reference change; a fresh engine auto-fits, which would otherwise throw away
+  // the user's pan/zoom on every such edit. The previous run's cleanup stows the
+  // viewport here so the new engine can restore it instead of snapping to fit.
+  const preservedViewport = useRef<
+    TimelineEventMap<TData>['viewportChange'] | null
+  >(null);
 
   // Engine lifecycle. Re-creates only when theme/options change by reference
   // (hosts memoize these — §12 referential-stability contract).
@@ -129,9 +137,22 @@ export function useTimeline<TData>(
     if (dataRef.current) {
       engine.setData(dataRef.current);
       appliedData.current = dataRef.current;
+
+      // Restore the camera captured before the prior engine was disposed, so a
+      // theme/options edit keeps the current view instead of refitting (§12).
+      // `zoomToRange` reproduces originTime+pxPerMs exactly at the unchanged
+      // viewport width; `setScrollY` restores the vertical position. Runs after
+      // `setData` so it overrides that call's initial auto-fit. On first mount
+      // the snapshot is null, so the engine fits to data as before.
+      const prior = preservedViewport.current;
+      if (prior !== null) {
+        engine.zoomToRange(prior.timeRange[0], prior.timeRange[1]);
+        engine.setScrollY(prior.scrollY);
+      }
     }
 
     return () => {
+      preservedViewport.current = engine.getViewport();
       for (const unsubscribe of off) unsubscribe();
       observer.disconnect();
       engine.dispose();
