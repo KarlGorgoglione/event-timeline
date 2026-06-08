@@ -50,4 +50,24 @@ describe('resolveTheme (§11 theme merge)', () => {
     expect(defaultTheme.headerMajorTickRatio).toBe(0.32);
     expect(defaultTheme.headerMinorTickRatio).toBe(0.72);
   });
+
+  it('defaults the source-node label box to an invisible (transparent) box', () => {
+    expect(defaultTheme.event.labelBoxBackground).toBe('transparent');
+    expect(defaultTheme.event.labelBoxBorderColor).toBe('transparent');
+    expect(defaultTheme.event.labelBoxBorderWidth).toBe(0);
+    expect(defaultTheme.event.labelBoxBorderDash).toEqual([]);
+  });
+
+  it('fills missing label-box fields from defaults when a partial event omits them', () => {
+    const theme = resolveTheme(
+      partialTheme({ event: { labelBoxBackground: '#222' } }),
+    );
+    expect(theme.event.labelBoxBackground).toBe('#222');
+    expect(theme.event.labelBoxBorderColor).toBe(
+      defaultTheme.event.labelBoxBorderColor,
+    );
+    expect(theme.event.labelBoxPadding).toBe(
+      defaultTheme.event.labelBoxPadding,
+    );
+  });
 });

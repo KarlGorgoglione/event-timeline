@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { hairlineOffset, scaleFontToDevice, snapDevice } from './device';
+import {
+  hairlineOffset,
+  parseFontPx,
+  scaleFontToDevice,
+  snapDevice,
+} from './device';
 
 describe('snapDevice', () => {
   it('scales CSS px by dpr and rounds to an integer device px', () => {
@@ -28,5 +33,17 @@ describe('scaleFontToDevice', () => {
     expect(scaleFontToDevice('600 14px system-ui', 1.5)).toBe(
       '600 21px system-ui',
     );
+  });
+});
+
+describe('parseFontPx', () => {
+  it('reads the px size from a CSS font shorthand', () => {
+    expect(parseFontPx('11px system-ui, sans-serif')).toBe(11);
+    expect(parseFontPx('600 14px system-ui')).toBe(14);
+    expect(parseFontPx('11.5px Inter')).toBe(11.5);
+  });
+
+  it('falls back to a default when there is no px token', () => {
+    expect(parseFontPx('bold 1em system-ui')).toBe(11);
   });
 });

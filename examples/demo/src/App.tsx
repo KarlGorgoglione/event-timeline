@@ -11,6 +11,7 @@ import {
   type StyleResolvers,
   type Theme,
   type TimelineHandle,
+  type TimelineOptions,
 } from '@event-timeline/react';
 import { demoData } from './fixture';
 import { makeStreamBatch, makeSynthetic, type DemoDatum } from './synthetic';
@@ -40,22 +41,17 @@ const lightTheme: Partial<Theme> = {
   hoverColor: '#d97706',
   selectionColor: '#2563eb',
   clusterColor: '#b45309',
+  // Spread the defaults so new stylable fields (e.g. the §11 label box) stay
+  // complete without restating every key here.
   element: {
+    ...defaultTheme.element,
     lineColor: '#2563eb',
-    lineWidth: 2,
-    lineDash: [],
     labelColor: '#1f2933',
-    labelFont: '12px system-ui, sans-serif',
-    iconSize: 16,
   },
   event: {
+    ...defaultTheme.event,
     arrowColor: '#52606d',
-    arrowWidth: 1,
-    arrowDash: [],
-    arrowheadSize: 6,
     labelColor: '#1f2933',
-    labelFont: '11px system-ui, sans-serif',
-    nodeRadius: 3,
   },
 };
 
@@ -134,6 +130,7 @@ export function App() {
   const [decorated, setDecorated] = useState(false);
   const [coloured, setColoured] = useState(false);
   const [labelled, setLabelled] = useState(false);
+  const [sourceNodeLabels, setSourceNodeLabels] = useState(false);
   const [hover, setHover] = useState<HitResult<DemoDatum> | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [viewport, setViewport] = useState({ pxPerMs: 0, scrollY: 0 });
@@ -164,9 +161,14 @@ export function App() {
   );
   // A new `options` reference (on layout change) re-creates the engine and
   // re-runs layout (§12 referential-stability contract).
-  const options = useMemo(
-    () => ({ multiSelect: true, layout: LAYOUTS[layoutName] }),
-    [layoutName],
+  const options = useMemo<TimelineOptions>(
+    () => ({
+      multiSelect: true,
+      layout: LAYOUTS[layoutName],
+      // Placement only moves the label; its box style (below) shows in either mode.
+      eventLabel: { placement: sourceNodeLabels ? 'sourceNode' : 'midpoint' },
+    }),
+    [layoutName, sourceNodeLabels],
   );
 
   // Phase 6 props, memoized so the engine isn't re-created every render (§12).
@@ -182,7 +184,18 @@ export function App() {
       coloured
         ? {
             element: (e) => ({ lineColor: paletteColor(e.data?.category) }),
-            event: (e) => ({ arrowColor: paletteColor(e.data?.category) }),
+            event: (e) => {
+              const colour = paletteColor(e.data?.category);
+              // Tint the label box per category. As box styling is independent of
+              // placement, this shows the same in both midpoint and source-node
+              // modes — the §11 per-event resolver path, end to end.
+              return {
+                arrowColor: colour,
+                labelBoxBackground: 'rgba(0, 0, 0, 0.55)',
+                labelBoxBorderColor: colour,
+                labelBoxBorderWidth: 1,
+              };
+            },
           }
         : undefined,
     [coloured],
@@ -356,6 +369,14 @@ export function App() {
           style={{ font: '12px system-ui' }}
         >
           labels: {labelled ? 'on' : 'off'}
+        </button>
+        <button
+          type="button"
+          data-testid="toggle-source-node-labels"
+          onClick={() => setSourceNodeLabels((v) => !v)}
+          style={{ font: '12px system-ui' }}
+        >
+          label placement: {sourceNodeLabels ? 'source node' : 'midpoint'}
         </button>
         <button
           type="button"

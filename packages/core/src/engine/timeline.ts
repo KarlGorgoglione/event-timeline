@@ -40,10 +40,13 @@ import {
   snapLabels,
   snapLines,
   snapNodes,
+  snapRects,
 } from '../render/snap';
 import type {
   BuildContext,
   ClusteringConfig,
+  EventLabelConfig,
+  EventLabelPlacement,
   LodConfig,
   ResolveIcon,
 } from '../render/specs';
@@ -72,6 +75,16 @@ import { debounce, type Debounced } from './debounce';
 import { TypedEmitter, type TimelineEventMap } from './emitter';
 import { FrameScheduler, type DirtyFlags } from './scheduler';
 import { resolveTheme } from './theme';
+
+/**
+ * Upper bound on the memoised `measureText` width cache (§4). Visible boxed
+ * labels are LOD- and viewport-gated, so the live working set is far smaller;
+ * the cap only stops historical/off-screen labels from accumulating without
+ * bound under a long stream (which never calls `setData`). On overflow the
+ * cache is cleared wholesale — the next frame cheaply re-measures only the few
+ * labels actually on screen.
+ */
+const MEASURE_CACHE_MAX = 8192;
 
 /** Event collapsing/aggregation config (DESIGN.md §6); all fields defaulted. */
 export interface ClusteringOptions {
@@ -142,6 +155,14 @@ export interface TimelineEngineOptions<TData = unknown> {
   streamingLayout?: 'stable-append' | 'full';
   clustering?: ClusteringOptions;
   lod?: LodOptions;
+  /**
+   * Event-label placement (DESIGN.md §11): where each event's label sits relative
+   * to its arrow. `'sourceNode'` centres it above/below the source node dot
+   * (direction-aware); `'midpoint'` (default) places it beside the riser at its
+   * vertical midpoint. Placement only moves the label — its style (text + the
+   * themeable {@link EventStyle} `labelBox*` box) is identical in every placement.
+   */
+  eventLabel?: { placement?: EventLabelPlacement };
   /** Data-driven per-item style overrides (DESIGN.md §11). */
   styleResolvers?: StyleResolvers<TData>;
   /** Label/tick text formatters (DESIGN.md §11). */
@@ -186,6 +207,10 @@ export class TimelineEngine<TData = unknown> {
   /** Resolved per-frame LOD/clustering config (DESIGN.md §6). */
   private readonly lod: LodConfig;
   private readonly clustering: ClusteringConfig;
+  /** Resolved event-label placement config (DESIGN.md §11). */
+  private readonly eventLabel: EventLabelConfig;
+  /** Memoised text widths for label-box sizing (§4 "caller caches measureText"). */
+  private readonly measureCache = new Map<string, number>();
   /**
    * §11 style/label resolution, bound once from the theme + host resolvers. The
    * builders receive these via `BuildContext`, so resolution lives in one place.
@@ -225,6 +250,28 @@ export class TimelineEngine<TData = unknown> {
       return image ? { kind: 'image', image } : { kind: 'none' };
     }
     return { kind: 'text', text: icon };
+  };
+
+  /**
+   * Cached text measurement passed to builders via `BuildContext` (§4): wraps the
+   * renderer's `measureText` and memoises by font+text. The font is the CSS-px
+   * shorthand (dpr-independent), so the cache stays valid across zoom.
+   */
+  private readonly measureText = (
+    text: string,
+    font: string,
+  ): { width: number } => {
+    const key = `${font} ${text}`;
+    let width = this.measureCache.get(key);
+    if (width === undefined) {
+      width = this.renderer.measureText(text, font).width;
+      // Bound the cache so a long stream of unique labels can't grow it without
+      // limit (§4); clearing is safe because re-measurement is cheap.
+      if (this.measureCache.size >= MEASURE_CACHE_MAX)
+        this.measureCache.clear();
+      this.measureCache.set(key, width);
+    }
+    return { width };
   };
 
   private viewport: Viewport = { cssWidth: 0, cssHeight: 0 };
@@ -278,6 +325,9 @@ export class TimelineEngine<TData = unknown> {
         options.lod?.eventLabelMinPxPerMs ??
         DEFAULT_EVENT_LABEL_MIN_PX_PER_DAY / MS_PER_DAY,
     };
+    this.eventLabel = {
+      placement: options.eventLabel?.placement ?? 'midpoint',
+    };
     // Bind §11 resolution once: theme → resolver → per-item `.style`. The theme is
     // fixed per engine instance, so binding here (not per frame) is correct.
     const elementResolver = options.styleResolvers?.element;
@@ -318,6 +368,9 @@ export class TimelineEngine<TData = unknown> {
   // --- Public API ---
 
   setData(data: TimelineData<TData>): void {
+    // A full data swap retires the previous labels; drop their measurements so
+    // the cache reflects only the live dataset (§4).
+    this.measureCache.clear();
     const counts = this.store.setData(data);
     this.recomputeLayout('full');
     this.maybeFit();
@@ -713,6 +766,8 @@ export class TimelineEngine<TData = unknown> {
       resolveIcon: this.resolveIcon,
       lod: this.lod,
       clustering: this.clustering,
+      eventLabel: this.eventLabel,
+      measureText: this.measureText,
       resolveElementStyle: this.resolveElementStyle,
       resolveEventStyle: this.resolveEventStyle,
       formatElementLabel: this.formatElementLabel,
@@ -742,6 +797,17 @@ export class TimelineEngine<TData = unknown> {
     }
     for (const spec of arrows.arrowheads) {
       this.renderer.drawArrowheads(snapArrowheads(spec, dpr));
+    }
+    // Source-node label boxes (§11): background then border, both above the
+    // arrows/nodes but behind the label text drawn next.
+    for (const spec of arrows.boxes) {
+      const rect = snapRects(spec, dpr);
+      for (const it of rect.items) {
+        this.renderer.fillRect(it.x, it.y, it.w, it.h, rect.color);
+      }
+    }
+    for (const spec of arrows.boxBorders) {
+      this.renderer.drawLines(snapLines(spec, dpr));
     }
     for (const spec of arrows.labels) {
       this.renderer.drawText(snapLabels(spec, dpr));

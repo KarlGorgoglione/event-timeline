@@ -51,6 +51,14 @@ export const defaultTheme: Theme = {
     labelColor: '#c9d1d9',
     labelFont: '11px system-ui, sans-serif',
     nodeRadius: 3,
+    // Source-node label box off by default: transparent fill + zero border means
+    // enabling the placement alone leaves the look byte-identical until a theme or
+    // resolver supplies colours (§11).
+    labelBoxBackground: 'transparent',
+    labelBoxBorderColor: 'transparent',
+    labelBoxBorderWidth: 0,
+    labelBoxBorderDash: [],
+    labelBoxPadding: 3,
   },
 };
 

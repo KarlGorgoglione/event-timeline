@@ -59,6 +59,12 @@ export interface LabelSpec {
   items: { x: number; y: number; text: string }[];
 }
 
+/** Filled rectangles sharing one colour (event label box backgrounds, §11). */
+export interface RectSpec {
+  color: string;
+  items: { x: number; y: number; w: number; h: number }[];
+}
+
 /** Icon images, drawn at a square size in CSS pixels. */
 export interface IconSpec {
   items: { x: number; y: number; size: number; image: HTMLImageElement }[];
@@ -154,6 +160,23 @@ export interface ClusteringConfig {
   minSeparationPx: number;
 }
 
+/**
+ * Where an event's label is positioned relative to its arrow (DESIGN.md §11).
+ * This is a *position* only — the label's style (text + box) is identical across
+ * placements. New placements are added here and given a case in the builder's
+ * anchor resolver; nothing else changes.
+ *
+ * - `'midpoint'` — to the side of the riser, at its vertical midpoint (default).
+ * - `'sourceNode'` — centred above/below the source node dot, direction-aware.
+ */
+export type EventLabelPlacement = 'midpoint' | 'sourceNode';
+
+/** Resolved event-label placement config for one frame (DESIGN.md §11). */
+export interface EventLabelConfig {
+  /** Active label placement for this frame. Default `'midpoint'`. */
+  placement: EventLabelPlacement;
+}
+
 /** Everything a primitive builder reads for one frame. */
 export interface BuildContext<TData = unknown> {
   camera: Camera;
@@ -165,6 +188,14 @@ export interface BuildContext<TData = unknown> {
   resolveIcon: ResolveIcon;
   lod: LodConfig;
   clustering: ClusteringConfig;
+  /** Event-label placement mode for this frame (§11). */
+  eventLabel: EventLabelConfig;
+  /**
+   * Cached text width measurement (CSS-px font), used to size the event label
+   * box. Part of the Renderer contract (§4); the engine binds a memoized wrapper
+   * so the builder stays pure and is trivially stubbed in tests.
+   */
+  measureText: (text: string, font: string) => { width: number };
   /**
    * Fully resolved per-item styles, following the §11 order (per-item `style` →
    * resolver → theme). The engine binds these from its theme + style resolvers so

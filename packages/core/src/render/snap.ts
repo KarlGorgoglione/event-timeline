@@ -13,6 +13,7 @@ import type {
   LabelSpec,
   LineSpec,
   NodeSpec,
+  RectSpec,
 } from './specs';
 import type {
   ArrowheadBatch,
@@ -90,6 +91,24 @@ export function snapLabels(spec: LabelSpec, dpr: number): TextBatch {
       x: snapDevice(i.x, dpr),
       y: snapDevice(i.y, dpr),
       text: i.text,
+    })),
+  };
+}
+
+/** Device-px label-box background, drawn via the `fillRect` verb (a fill, no hairline offset). */
+export interface RectBatch {
+  color: string;
+  items: { x: number; y: number; w: number; h: number }[];
+}
+
+export function snapRects(spec: RectSpec, dpr: number): RectBatch {
+  return {
+    color: spec.color,
+    items: spec.items.map((r) => ({
+      x: snapDevice(r.x, dpr),
+      y: snapDevice(r.y, dpr),
+      w: snapDevice(r.w, dpr),
+      h: snapDevice(r.h, dpr),
     })),
   };
 }

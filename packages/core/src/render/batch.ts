@@ -5,7 +5,13 @@
 // changes. These helpers are the one place a batch key is formed, keeping the
 // keying consistent across the elementLines and arrows builders (DRY).
 
-import type { ArrowheadSpec, LabelSpec, LineSpec, NodeSpec } from './specs';
+import type {
+  ArrowheadSpec,
+  LabelSpec,
+  LineSpec,
+  NodeSpec,
+  RectSpec,
+} from './specs';
 
 export function lineBatch(
   map: Map<string, LineSpec>,
@@ -48,6 +54,15 @@ export function arrowheadBatch(
   if (batch === undefined) {
     batch = { color, size, items: [] };
     map.set(key, batch);
+  }
+  return batch;
+}
+
+export function boxBatch(map: Map<string, RectSpec>, color: string): RectSpec {
+  let batch = map.get(color);
+  if (batch === undefined) {
+    batch = { color, items: [] };
+    map.set(color, batch);
   }
   return batch;
 }

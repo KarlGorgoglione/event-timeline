@@ -22,6 +22,7 @@ export type {
   Formatters,
   ElementStyleResolver,
   EventStyleResolver,
+  EventLabelPlacement,
   TickFormatter,
   FrameStats,
 } from '@event-timeline/core';
