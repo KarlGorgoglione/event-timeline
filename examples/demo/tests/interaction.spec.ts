@@ -70,9 +70,10 @@ test('clicking a primitive selects it (status + overlay highlight)', async ({
     'selected: —',
   );
 
-  // Move the pointer off the canvas so hover clears: whatever remains on the
-  // overlay is the *selection* highlight, drawn without a base redraw (§4).
-  await page.mouse.move(box.x + box.width - 2, box.y + 2);
+  // Move the pointer to an empty patch of canvas so hover clears: whatever
+  // remains on the overlay is the *selection* highlight, drawn without a base
+  // redraw (§4). Bottom-left is below the element rows and clear of the panel.
+  await page.mouse.move(box.x + 2, box.y + box.height - 2);
   await expect(page.getByTestId('status-hover')).toHaveText('hover: —');
 
   // The overlay canvas (topmost) still has the selection highlight: non-blank.
@@ -129,12 +130,94 @@ test('ctrl+wheel zooms about the cursor (pxPerMs increases)', async ({
     .toBeGreaterThan(before);
 });
 
+/** Cheap hash of the base canvas, used to detect when a rebuild has repainted. */
+async function baseCanvasHash(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const root = document.querySelector('[data-testid="timeline-root"]');
+    const canvas = root?.querySelector('canvas'); // first canvas = base layer
+    if (!(canvas instanceof HTMLCanvasElement) || canvas.width === 0) return -1;
+    const ctx = canvas.getContext('2d');
+    if (ctx === null) return -1;
+    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let hash = 0;
+    for (let i = 0; i < data.length; i += 64)
+      hash = (hash + (data[i] ?? 0)) | 0;
+    return hash;
+  });
+}
+
+test('editing a panel parameter preserves pan/zoom (no camera reset, §12)', async ({
+  page,
+}) => {
+  await page.goto('/');
+  await expect(page.getByTestId('timeline-root')).toBeVisible();
+  // Tall dataset so vertical scroll has somewhere to go.
+  await page.getByLabel('Dataset').selectOption('synthetic10k');
+  await expect
+    .poll(() => statusNumber(page, 'status-pxperms'))
+    .toBeGreaterThan(0);
+
+  const fitPx = await statusNumber(page, 'status-pxperms');
+  const { x, y } = await overlayCentre(page);
+
+  // Move the camera off its fit: ctrl+wheel zooms in 4× (deltaY -400), then a
+  // plain wheel scrolls the rows down.
+  await page.evaluate(
+    ({ x, y }) => {
+      const root = document.querySelector('[data-testid="timeline-root"]');
+      const overlay = root?.querySelectorAll('canvas')[1];
+      const at = (init: WheelEventInit) =>
+        overlay?.dispatchEvent(
+          new WheelEvent('wheel', {
+            clientX: x,
+            clientY: y,
+            bubbles: true,
+            cancelable: true,
+            ...init,
+          }),
+        );
+      at({ deltaY: -400, ctrlKey: true });
+      at({ deltaY: 600 });
+    },
+    { x, y },
+  );
+
+  await expect
+    .poll(() => statusNumber(page, 'status-pxperms'))
+    .toBeGreaterThan(fitPx * 2);
+  await expect
+    .poll(() => statusNumber(page, 'status-scrolly'))
+    .toBeGreaterThan(0);
+  const pxBefore = await statusNumber(page, 'status-pxperms');
+  const scrollBefore = await statusNumber(page, 'status-scrolly');
+
+  // Edit a theme parameter (row separators). The React binding rebuilds the
+  // engine on a theme-reference change; the new engine must restore the prior
+  // view instead of snapping back to fit (DESIGN.md §12).
+  const hashBefore = await baseCanvasHash(page);
+  await page.getByText('Rows & layout').click();
+  await page.getByRole('switch', { name: 'Row separators' }).click();
+  // Wait until the rebuilt engine has repainted (separators now drawn) — at
+  // which point the restored camera is the engine's final state for this frame.
+  await expect.poll(() => baseCanvasHash(page)).not.toBe(hashBefore);
+
+  const pxAfter = await statusNumber(page, 'status-pxperms');
+  const scrollAfter = await statusNumber(page, 'status-scrolly');
+  // A reset would drop pxPerMs back to ~fitPx and scrollY to 0; preservation
+  // keeps both within rounding of their pre-edit values.
+  expect(pxAfter).toBeGreaterThan(fitPx * 2);
+  expect(Math.abs(pxAfter - pxBefore) / pxBefore).toBeLessThan(0.02);
+  expect(scrollAfter).toBeGreaterThan(0);
+  expect(Math.abs(scrollAfter - scrollBefore)).toBeLessThan(1);
+});
+
 test('vertical wheel scrolls the tall dataset (scrollY increases)', async ({
   page,
 }) => {
   await page.goto('/');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
-  await page.getByTestId('toggle-dataset').click(); // 200-row synthetic set
+  // 200-row synthetic set, selected via the panel's dataset selector.
+  await page.getByLabel('Dataset').selectOption('synthetic10k');
 
   const { x, y } = await overlayCentre(page);
   await page.evaluate(

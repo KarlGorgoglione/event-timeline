@@ -131,6 +131,42 @@ describe('TimelineEngine interactions (§9, §12)', () => {
     engine.dispose();
   });
 
+  it('setScrollY scrolls vertically, clamps to content, and emits viewportChange (§12)', () => {
+    const engine = makeEngine();
+    engine.resize(800, 400, 1);
+    // Many rows so the content overflows the viewport body and scroll has room.
+    const elements = Array.from({ length: 40 }, (_, i) => ({
+      id: `e${i}`,
+      label: `E${i}`,
+    }));
+    const events = elements.map((el, i) => ({
+      id: `ev${i}`,
+      sourceId: el.id,
+      targetId: `e${(i + 1) % 40}`,
+      time: Date.UTC(2026, 0, 1 + i),
+    }));
+    engine.setData({ elements, events });
+
+    let emitted = 0;
+    engine.on('viewportChange', () => emitted++);
+
+    engine.setScrollY(200);
+    expect(engine.getViewport().scrollY).toBe(200);
+    expect(emitted).toBe(1);
+
+    // Over-scroll clamps to the max (cannot exceed the content height).
+    engine.setScrollY(1_000_000);
+    const clamped = engine.getViewport().scrollY;
+    expect(clamped).toBeGreaterThan(0);
+    expect(clamped).toBeLessThan(1_000_000);
+
+    // A negative offset clamps back to the top.
+    engine.setScrollY(-50);
+    expect(engine.getViewport().scrollY).toBe(0);
+
+    engine.dispose();
+  });
+
   it('select() ignores a no-op replacement (no event, no overlay redraw)', () => {
     const engine = makeEngine();
     engine.resize(800, 400, 1);

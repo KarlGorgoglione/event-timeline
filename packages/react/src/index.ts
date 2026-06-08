@@ -25,10 +25,20 @@ export type {
   EventLabelPlacement,
   TickFormatter,
   FrameStats,
+  ClusterStrategy,
 } from '@event-timeline/core';
 
 // Built-in layout strategies (DESIGN.md §7), so hosts can name one in `options`.
 export { byFirstEvent, barycenter, explicit } from '@event-timeline/core';
+
+// Built-in cluster strategies (DESIGN.md §6), so hosts can name one in
+// `options.clustering.strategy` without depending on core directly.
+export {
+  byPixelColumn,
+  byElementPair,
+  byDay,
+  bySourceTargetColumn,
+} from '@event-timeline/core';
 
 // The dark theme default (base of the §11 resolution chain), so hosts can read
 // or compose against it when building a `Partial<Theme>`.

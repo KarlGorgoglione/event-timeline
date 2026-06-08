@@ -59,29 +59,31 @@ test('theming + data-driven colours/labels render without errors (§11)', async 
     .toBeLessThan(60);
   const greenBefore = (await canvasStats(page))?.green ?? 0;
 
-  // Theme → light: the background flips, so average luminance jumps.
-  await page.getByTestId('toggle-theme').click();
+  // Light preset: the background flips, so average luminance jumps.
+  await page.getByRole('button', { name: 'Light' }).click();
   await expect
     .poll(async () => (await canvasStats(page))?.avgLum ?? 0, { timeout: 5000 })
     .toBeGreaterThan(180);
 
   // Back to dark for a clean data-driven-colour comparison.
-  await page.getByTestId('toggle-theme').click();
+  await page.getByRole('button', { name: 'Dark' }).click();
   await expect
     .poll(async () => (await canvasStats(page))?.avgLum ?? 999, {
       timeout: 5000,
     })
     .toBeLessThan(60);
 
-  // Colours on → a resolver paints at least one line a palette green.
-  await page.getByTestId('toggle-resolvers').click();
+  // Open the data-hooks section, then turn colours on → a resolver paints at
+  // least one line a palette green.
+  await page.getByText('Data hooks').click();
+  await page.getByRole('switch', { name: 'Data-driven colours' }).click();
   await expect
     .poll(async () => (await canvasStats(page))?.green ?? 0, { timeout: 5000 })
     .toBeGreaterThan(greenBefore);
 
   // Formatters on → re-renders (labels upper-cased / events prefixed); the
   // canvas must stay non-blank. Exact text is covered by the unit tests.
-  await page.getByTestId('toggle-formatters').click();
+  await page.getByRole('switch', { name: 'Uppercase labels' }).click();
   await expect
     .poll(async () => (await canvasStats(page))?.avgLum ?? 0, { timeout: 5000 })
     .toBeGreaterThan(0);
@@ -112,7 +114,7 @@ async function canvasHash(
   });
 }
 
-test('decorations toggle dashes lines/gridlines and draws row separators (§11)', async ({
+test('row separators change the painted pixels and revert cleanly (§11)', async ({
   page,
 }) => {
   const errors: string[] = [];
@@ -132,15 +134,17 @@ test('decorations toggle dashes lines/gridlines and draws row separators (§11)'
   const before = await canvasHash(page);
   expect(before).not.toBeNull();
 
-  // Decor on → dashed element lines + arrows, dashed gridlines, and row
-  // separators change which pixels are painted, so the canvas hash shifts.
-  await page.getByTestId('toggle-decorations').click();
+  // Row separators draw a line at every row boundary across the full width, so
+  // enabling them changes which pixels are painted and the canvas hash shifts.
+  await page.getByText('Rows & layout').click();
+  const separators = page.getByRole('switch', { name: 'Row separators' });
+  await separators.click();
   await expect
     .poll(async () => await canvasHash(page), { timeout: 5000 })
     .not.toBe(before);
 
-  // Decor off → restores the solid render.
-  await page.getByTestId('toggle-decorations').click();
+  // Disabling them restores the original render exactly.
+  await separators.click();
   await expect
     .poll(async () => await canvasHash(page), { timeout: 5000 })
     .toBe(before);
