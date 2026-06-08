@@ -1,5 +1,38 @@
 # @event-timeline/core
 
+## 0.3.0
+
+### Minor Changes
+
+- 01256a9: Add a configurable event-label **placement** (§11). `options.eventLabel.placement`
+  selects where each event's label sits relative to its arrow: `'sourceNode'`
+  centres it in a box above/below the source node dot (direction-aware), while
+  `'midpoint'` (the default) keeps it beside the riser at its vertical midpoint.
+
+  Placement only moves the label — its **style is identical in every placement**.
+  The themeable, per-event-resolvable label box (`EventStyle.labelBoxBackground`,
+  `labelBoxBorderColor`, `labelBoxBorderWidth`, `labelBoxBorderDash`,
+  `labelBoxPadding`) is drawn the same way wherever the label sits, so a box you
+  configure shows at the midpoint and at the source node alike. Defaults stay
+  transparent, so labels render as plain text until a fill or border is opted in.
+
+  Exposed on the React `options.eventLabel` prop; the `EventLabelPlacement` type is
+  exported from both packages.
+
+- 15f381e: Preserve the camera (pan/zoom) across engine rebuilds.
+
+  `@event-timeline/core` gains a public `setScrollY(scrollY)` on the engine (and the
+  `@event-timeline/react` imperative handle), clamped to the content height —
+  the vertical counterpart to the existing `zoomToRange`/`getViewport`.
+
+  The React binding recreates the engine whenever `theme`/`options`/`styleResolvers`/
+  `formatters` change by reference (DESIGN.md §12). A fresh engine auto-fits, which
+  previously discarded the user's pan/zoom on every such edit. `useTimeline` now
+  snapshots the viewport before disposing the old engine and restores it
+  (`zoomToRange` + `setScrollY`) after the new one loads its data, so live-editing a
+  colour, font, or any other parameter keeps the current view instead of snapping
+  back to fit. The first mount still fits to data as before.
+
 ## 0.2.0
 
 ### Minor Changes
