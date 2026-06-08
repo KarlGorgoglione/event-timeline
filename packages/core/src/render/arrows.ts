@@ -17,15 +17,24 @@
 
 import { clusterEvents } from '../cluster/cluster';
 import type { ClusterContext } from '../cluster/types';
-import { arrowheadBatch, labelBatch, lineBatch, nodeBatch } from './batch';
+import {
+  arrowheadBatch,
+  boxBatch,
+  labelBatch,
+  lineBatch,
+  nodeBatch,
+} from './batch';
+import { parseFontPx } from './device';
 import { buildRiserSegments } from './riser';
 import type {
   ArrowheadSpec,
   BuildContext,
+  EventLabelPlacement,
   HitTarget,
   LabelSpec,
   LineSpec,
   NodeSpec,
+  RectSpec,
 } from './specs';
 import type { EventStyle, TimelineEvent } from '../model/types';
 
@@ -56,6 +65,10 @@ interface Batches<TData> {
   nodes: Map<string, NodeSpec>;
   arrowheads: Map<string, ArrowheadSpec>;
   labels: Map<string, LabelSpec>;
+  /** Event label-box backgrounds, keyed by fill colour (§11). */
+  boxes: Map<string, RectSpec>;
+  /** Event label-box borders, keyed by colour/width/dash (§11). */
+  boxBorders: Map<string, LineSpec>;
   targets: HitTarget<TData>[];
   /** Count of risers already placed per rounded pixel column (sub-lane keying). */
   columnCounts: Map<number, number>;
@@ -67,6 +80,10 @@ export interface ArrowsResult<TData = unknown> {
   nodes: NodeSpec[];
   arrowheads: ArrowheadSpec[];
   labels: LabelSpec[];
+  /** Event label-box backgrounds; drawn behind labels, above arrows (§11). */
+  boxes: RectSpec[];
+  /** Event label-box borders; drawn over backgrounds, behind labels (§11). */
+  boxBorders: LineSpec[];
   /** Identity-carrying arrow/cluster geometry for hit-testing (§5, §6). */
   targets: HitTarget<TData>[];
 }
@@ -81,6 +98,8 @@ export function buildArrows<TData>(
     nodes: new Map(),
     arrowheads: new Map(),
     labels: new Map(),
+    boxes: new Map(),
+    boxBorders: new Map(),
     targets: [],
     columnCounts: new Map(),
   };
@@ -131,6 +150,8 @@ export function buildArrows<TData>(
     nodes: [...batches.nodes.values()],
     arrowheads: [...batches.arrowheads.values()],
     labels: [...batches.labels.values()],
+    boxes: [...batches.boxes.values()],
+    boxBorders: [...batches.boxBorders.values()],
     targets: batches.targets,
   };
 }
@@ -183,10 +204,17 @@ function addSingleArrow<TData>(
     const y = camera.rowToScreenY(rows.sourceRow) + halfRow;
     addSelfLoop(batches, { color, width, dash, size, radius }, x, y, event);
     if (labelText) {
-      pushEventLabel(batches.labels, labelText, style, {
-        x: x + size * 2 + eventLabelGap,
-        y,
+      // The loop glyph sits above the line, so a source-node label goes below
+      // it (dir = -1); the midpoint side label clears the loop's width.
+      const anchor = eventLabelAnchor(ctx.eventLabel.placement, style, {
+        x,
+        ySource: y,
+        dir: -1,
+        sideX: x + size * 2 + eventLabelGap,
+        midY: y,
+        gap: radius + eventLabelGap,
       });
+      pushEventLabel(batches, ctx, labelText, style, anchor);
     }
     return;
   }
@@ -236,10 +264,15 @@ function addSingleArrow<TData>(
     arrowheadSize: size,
   });
   if (labelText) {
-    pushEventLabel(batches.labels, labelText, style, {
-      x: x + width / 2 + eventLabelGap,
-      y: (ySource + yTargetCenter) / 2,
+    const anchor = eventLabelAnchor(ctx.eventLabel.placement, style, {
+      x,
+      ySource,
+      dir,
+      sideX: x + width / 2 + eventLabelGap,
+      midY: (ySource + yTargetCenter) / 2,
+      gap: radius + eventLabelGap,
     });
+    pushEventLabel(batches, ctx, labelText, style, anchor);
   }
 }
 
@@ -385,15 +418,150 @@ function addSelfLoop<TData>(
   });
 }
 
-function pushEventLabel(
-  labels: Map<string, LabelSpec>,
+/**
+ * Where an event label's text is drawn. Placement decides this; the label's
+ * style (text + box) is then applied identically by {@link pushEventLabel}.
+ */
+interface LabelAnchor {
+  x: number;
+  y: number;
+  align: LabelSpec['align'];
+  baseline: LabelSpec['baseline'];
+}
+
+/** Geometry a placement may draw on; each placement reads only what it needs. */
+interface LabelGeometry {
+  /** Riser column x and source-node centre y. */
+  x: number;
+  ySource: number;
+  /** Arrow direction: `1` points down, `-1` up. */
+  dir: number;
+  /** Left edge x of a side-placed (midpoint) label, already clear of the riser. */
+  sideX: number;
+  /** Vertical centre for a side-placed label. */
+  midY: number;
+  /** Clearance from the source node a node-anchored label keeps (dot + gap). */
+  gap: number;
+}
+
+/**
+ * Resolve the text anchor for the active label placement (§11). This is the
+ * *only* thing that varies between placements — the label's style is applied
+ * uniformly by {@link pushEventLabel}. Adding a placement means adding a branch
+ * here; the drawing never changes (open/closed).
+ */
+function eventLabelAnchor(
+  placement: EventLabelPlacement,
+  style: EventStyle,
+  geom: LabelGeometry,
+): LabelAnchor {
+  if (placement === 'sourceNode') {
+    // Centre the label over/under the node, offset by the gap plus the box's
+    // half-height (font + padding) so the box's near edge clears the node. The
+    // offset uses the box geometry even when no box is painted, so toggling the
+    // box background never shifts the label (style is independent of position).
+    const halfBox = parseFontPx(style.labelFont) / 2 + style.labelBoxPadding;
+    const y = geom.ySource - geom.dir * (geom.gap + halfBox);
+    return { x: geom.x, y, align: 'center', baseline: 'middle' };
+  }
+  // 'midpoint' (default): left-anchored beside the riser, vertically centred.
+  return { x: geom.sideX, y: geom.midY, align: 'left', baseline: 'middle' };
+}
+
+/**
+ * Emit one event label: its themeable box (when the style opts in) and its text,
+ * at the given anchor. The box is part of the label *style* (§11), so it renders
+ * the same in every placement — only the anchor differs. Text width is measured
+ * (to size the box) only when a box is actually drawn, so a plain label never
+ * pays for measurement.
+ */
+function pushEventLabel<TData>(
+  batches: Batches<TData>,
+  ctx: BuildContext<TData>,
   text: string,
   style: EventStyle,
-  at: { x: number; y: number },
+  anchor: LabelAnchor,
 ): void {
-  labelBatch(labels, style.labelColor, style.labelFont).items.push({
-    x: at.x,
-    y: at.y,
-    text,
-  });
+  if (eventLabelBoxVisible(style)) {
+    pushEventLabelBox(batches, ctx, text, style, anchor);
+  }
+  labelBatch(
+    batches.labels,
+    style.labelColor,
+    style.labelFont,
+    anchor.align,
+    anchor.baseline,
+  ).items.push({ x: anchor.x, y: anchor.y, text });
+}
+
+/** Whether the resolved style paints any label box (background or border, §11). */
+function eventLabelBoxVisible(style: EventStyle): boolean {
+  return (
+    style.labelBoxBackground !== 'transparent' ||
+    (style.labelBoxBorderWidth > 0 &&
+      style.labelBoxBorderColor !== 'transparent')
+  );
+}
+
+/**
+ * Draw the label's box: a rectangle wrapping the text plus `labelBoxPadding`,
+ * with optional background fill and border. The rect is derived from the text's
+ * bounds at the anchor (alignment + measured width + font px), so the box hugs
+ * the text the same way regardless of where the placement put it.
+ */
+function pushEventLabelBox<TData>(
+  batches: Batches<TData>,
+  ctx: BuildContext<TData>,
+  text: string,
+  style: EventStyle,
+  anchor: LabelAnchor,
+): void {
+  const pad = style.labelBoxPadding;
+  const textWidth = ctx.measureText(text, style.labelFont).width;
+  const fontPx = parseFontPx(style.labelFont);
+
+  // Text bounds at the anchor, then expand by padding to get the box rect.
+  const textLeft =
+    anchor.align === 'center'
+      ? anchor.x - textWidth / 2
+      : anchor.align === 'right'
+        ? anchor.x - textWidth
+        : anchor.x;
+  const textTop =
+    anchor.baseline === 'middle'
+      ? anchor.y - fontPx / 2
+      : anchor.baseline === 'top'
+        ? anchor.y
+        : anchor.y - fontPx; // 'alphabetic' ~ bottom-anchored
+  const boxX = textLeft - pad;
+  const boxY = textTop - pad;
+  const boxW = textWidth + 2 * pad;
+  const boxH = fontPx + 2 * pad;
+
+  if (style.labelBoxBackground !== 'transparent') {
+    boxBatch(batches.boxes, style.labelBoxBackground).items.push({
+      x: boxX,
+      y: boxY,
+      w: boxW,
+      h: boxH,
+    });
+  }
+  if (
+    style.labelBoxBorderWidth > 0 &&
+    style.labelBoxBorderColor !== 'transparent'
+  ) {
+    const right = boxX + boxW;
+    const bottom = boxY + boxH;
+    lineBatch(
+      batches.boxBorders,
+      style.labelBoxBorderColor,
+      style.labelBoxBorderWidth,
+      style.labelBoxBorderDash,
+    ).segments.push(
+      { x1: boxX, y1: boxY, x2: right, y2: boxY },
+      { x1: right, y1: boxY, x2: right, y2: bottom },
+      { x1: right, y1: bottom, x2: boxX, y2: bottom },
+      { x1: boxX, y1: bottom, x2: boxX, y2: boxY },
+    );
+  }
 }

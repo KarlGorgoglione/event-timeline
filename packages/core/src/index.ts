@@ -36,6 +36,7 @@ export type {
   FrameStats,
 } from './engine/timeline';
 export type { TimelineEventMap } from './engine/emitter';
+export type { EventLabelPlacement } from './render/specs';
 
 export { overlayStyle } from './render/resolveStyle';
 export type {

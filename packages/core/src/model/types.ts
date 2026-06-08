@@ -96,6 +96,22 @@ export interface EventStyle {
   labelFont: string;
   /** Source node dot radius. */
   nodeRadius: number;
+  /**
+   * Background fill of the event label box (DESIGN.md §11). The box is part of the
+   * label's *style*, so it is drawn the same way in every label placement
+   * (`options.eventLabel.placement`) — placement only moves the label, never
+   * restyles it. The default `'transparent'` paints no box, so the label renders
+   * as plain text until a theme/resolver opts into a colour.
+   */
+  labelBoxBackground: string;
+  /** Border colour of the event label box; `'transparent'` = no border. */
+  labelBoxBorderColor: string;
+  /** Border width of the event label box in CSS px; `0` = no border. */
+  labelBoxBorderWidth: number;
+  /** Border dash of the event label box; `[]` = solid, `[a,b]` = dashed. */
+  labelBoxBorderDash: LineDash;
+  /** Inner padding (text → box edge) of the event label box, in CSS px. */
+  labelBoxPadding: number;
 }
 
 /** Engine-wide theme: defaults plus structural metrics (DESIGN.md §11). */

@@ -6,6 +6,7 @@ import {
   snapLabels,
   snapLines,
   snapNodes,
+  snapRects,
 } from './snap';
 
 describe('snap CSS→device pass (§3)', () => {
@@ -78,6 +79,15 @@ describe('snap CSS→device pass (§3)', () => {
     const image = {} as HTMLImageElement;
     const batch = snapIcons({ items: [{ x: 5, y: 6, size: 16, image }] }, 2);
     expect(batch.items[0]).toEqual({ x: 10, y: 12, size: 32, image });
+  });
+
+  it('snapRects scales position and box size to device px (no hairline offset)', () => {
+    const batch = snapRects(
+      { color: '#123', items: [{ x: 5, y: 6, w: 18, h: 17 }] },
+      2,
+    );
+    expect(batch.color).toBe('#123');
+    expect(batch.items[0]).toEqual({ x: 10, y: 12, w: 36, h: 34 });
   });
 });
 

@@ -44,6 +44,8 @@ function ctxFor(theme: Theme, band: RowBand): BuildContext {
       overlayStyle(theme.event, undefined, event.style),
     formatElementLabel: (element) => element.label ?? element.id,
     formatEventLabel: (event) => event.label,
+    eventLabel: { placement: 'midpoint' },
+    measureText: (text) => ({ width: text.length * 6 }),
   };
 }
 

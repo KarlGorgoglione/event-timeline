@@ -10,6 +10,7 @@ import { useEffect, useRef, type RefObject } from 'react';
 import {
   TimelineEngine,
   type ClusteringOptions,
+  type EventLabelPlacement,
   type Formatters,
   type FrameStats,
   type HitResult,
@@ -36,6 +37,8 @@ export interface TimelineOptions {
   clustering?: ClusteringOptions;
   /** Level-of-detail config, e.g. the event-label zoom threshold (DESIGN.md §6). */
   lod?: LodOptions;
+  /** Event-label placement (DESIGN.md §11): `'sourceNode'` or `'midpoint'` (default). Style is identical across placements. */
+  eventLabel?: { placement?: EventLabelPlacement };
   /** Optional per-frame timing sink for benchmarking (DESIGN.md §13). */
   onFrameStats?: (stats: FrameStats) => void;
 }
@@ -91,6 +94,7 @@ export function useTimeline<TData>(
       multiSelect: options?.multiSelect,
       clustering: options?.clustering,
       lod: options?.lod,
+      eventLabel: options?.eventLabel,
       onFrameStats: options?.onFrameStats,
       styleResolvers,
       formatters,

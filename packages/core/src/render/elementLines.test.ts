@@ -61,6 +61,8 @@ function ctxFor(
     formatElementLabel:
       opts.formatElementLabel ?? ((element) => element.label ?? element.id),
     formatEventLabel: (event) => event.label,
+    eventLabel: { placement: 'midpoint' },
+    measureText: (text) => ({ width: text.length * 6 }),
   };
 }
 

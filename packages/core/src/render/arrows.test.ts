@@ -4,12 +4,14 @@ import { computeRowLayout } from '../layout/positions';
 import type { TimelineEvent } from '../model/types';
 import { Camera, type RowMetrics, type Viewport } from '../scale/camera';
 import { buildArrows, subLaneOffset } from './arrows';
+import { parseFontPx } from './device';
 import { bySourceTargetColumn } from '../cluster/strategies';
 import { overlayStyle, type EventStyleResolver } from './resolveStyle';
 import type {
   BuildContext,
   ClusteringConfig,
   DataAccess,
+  EventLabelPlacement,
   LodConfig,
   RowBand,
 } from './specs';
@@ -39,6 +41,10 @@ interface CtxOpts {
   formatEventLabel?: (event: TimelineEvent) => string | undefined;
   /** Override the row set (default: the 10 module rows r0..r9). */
   rowIds?: string[];
+  /** Choose the label placement (§11); default `'midpoint'`. */
+  eventLabel?: { placement: EventLabelPlacement };
+  /** Deterministic text width (default 6 CSS px/char) for box-geometry asserts. */
+  measureText?: (text: string, font: string) => { width: number };
 }
 
 function ctxFor(
@@ -89,6 +95,8 @@ function ctxFor(
       ),
     formatElementLabel: (element) => element.label ?? element.id,
     formatEventLabel: opts.formatEventLabel ?? ((event) => event.label),
+    eventLabel: opts.eventLabel ?? { placement: 'midpoint' },
+    measureText: opts.measureText ?? ((text) => ({ width: text.length * 6 })),
   };
 }
 
@@ -252,6 +260,203 @@ describe('buildArrows geometry (§1)', () => {
     expect(r.labels[0]!.items[0]!.y).toBeCloseTo(
       (rowCenter(0) + rowCenter(2)) / 2,
     );
+  });
+});
+
+describe('buildArrows event label box (§11)', () => {
+  const pad = defaultTheme.event.labelBoxPadding;
+  const fontPx = parseFontPx(defaultTheme.event.labelFont);
+  const boxH = fontPx + 2 * pad;
+  const gap = defaultTheme.event.nodeRadius + defaultTheme.eventLabelGap;
+  const atNode = { placement: 'sourceNode' } as const;
+  // Resolver that opts the box into a visible fill (defaults are transparent).
+  const filled: EventStyleResolver = () => ({ labelBoxBackground: '#123456' });
+
+  it('does not box the label by default (transparent box, any placement)', () => {
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r0', targetId: 'r2', time: 100, label: '$5' })],
+        fullBand,
+      ),
+    );
+    expect(r.boxes).toHaveLength(0);
+    expect(r.boxBorders).toHaveLength(0);
+    expect(r.labels[0]!.items[0]!.y).toBeCloseTo(
+      (rowCenter(0) + rowCenter(2)) / 2,
+    );
+  });
+
+  it('places the box above the source node for a downward arrow', () => {
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r0', targetId: 'r2', time: 100, label: '$5' })],
+        fullBand,
+        { eventLabel: atNode, styleResolver: filled },
+      ),
+    );
+    const box = r.boxes[0]!.items[0]!;
+    // Box bottom sits one gap above the source-row centre (dir = down).
+    expect(box.y + boxH).toBeCloseTo(rowCenter(0) - gap);
+    // Centred label sits in the box's vertical middle.
+    const label = r.labels[0]!;
+    expect(label.align).toBe('center');
+    expect(label.items[0]!.y).toBeCloseTo(box.y + boxH / 2);
+  });
+
+  it('places the box below the source node for an upward arrow', () => {
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r2', targetId: 'r0', time: 100, label: '$5' })],
+        fullBand,
+        { eventLabel: atNode, styleResolver: filled },
+      ),
+    );
+    const box = r.boxes[0]!.items[0]!;
+    // Box top sits one gap below the source-row centre (dir = up).
+    expect(box.y).toBeCloseTo(rowCenter(2) + gap);
+  });
+
+  it('sizes the box from the measured text width plus padding', () => {
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r0', targetId: 'r2', time: 100, label: 'abcd' })],
+        fullBand,
+        { eventLabel: atNode, styleResolver: filled },
+      ),
+    );
+    const box = r.boxes[0]!.items[0]!;
+    // measureText stub returns 6 px/char.
+    expect(box.w).toBe('abcd'.length * 6 + 2 * pad);
+    expect(box.h).toBe(boxH);
+  });
+
+  it('emits a 4-segment border carrying the resolved dash (border style)', () => {
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r0', targetId: 'r2', time: 100, label: '$5' })],
+        fullBand,
+        {
+          eventLabel: atNode,
+          styleResolver: () => ({
+            labelBoxBorderColor: '#abc',
+            labelBoxBorderWidth: 1,
+            labelBoxBorderDash: [2, 2],
+          }),
+        },
+      ),
+    );
+    expect(r.boxBorders).toHaveLength(1);
+    expect(r.boxBorders[0]!.color).toBe('#abc');
+    expect(r.boxBorders[0]!.dash).toEqual([2, 2]);
+    expect(r.boxBorders[0]!.segments).toHaveLength(4);
+  });
+
+  it('paints no background when the fill stays transparent (default)', () => {
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r0', targetId: 'r2', time: 100, label: '$5' })],
+        fullBand,
+        { eventLabel: atNode },
+      ),
+    );
+    expect(r.boxes).toHaveLength(0);
+    expect(r.boxBorders).toHaveLength(0);
+    // The label text itself is still drawn (centred at the node).
+    expect(r.labels[0]!.items[0]!.text).toBe('$5');
+  });
+
+  it('lets a per-item style override the resolver for the box fill (§11)', () => {
+    const r = buildArrows(
+      ctxFor(
+        [
+          ev({
+            sourceId: 'r0',
+            targetId: 'r2',
+            time: 100,
+            label: '$5',
+            style: { labelBoxBackground: '#ffffff' },
+          }),
+        ],
+        fullBand,
+        { eventLabel: atNode, styleResolver: filled },
+      ),
+    );
+    expect(r.boxes[0]!.color).toBe('#ffffff');
+  });
+
+  it('is still gated by label LOD (no text, no box below threshold)', () => {
+    const camera = new Camera(metrics, {
+      originTime: 0,
+      pxPerMs: 1,
+      scrollY: 0,
+    });
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r0', targetId: 'r2', time: 100, label: '$5' })],
+        fullBand,
+        {
+          camera,
+          eventLabel: atNode,
+          styleResolver: filled,
+          lod: { eventLabelMinPxPerMs: 2 },
+        },
+      ),
+    );
+    expect(r.labels).toHaveLength(0);
+    expect(r.boxes).toHaveLength(0);
+    expect(r.boxBorders).toHaveLength(0);
+  });
+
+  it('places a self-event box below the line, clearing the loop glyph', () => {
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r3', targetId: 'r3', time: 100, label: '$5' })],
+        fullBand,
+        { eventLabel: atNode, styleResolver: filled },
+      ),
+    );
+    const box = r.boxes[0]!.items[0]!;
+    expect(box.y).toBeCloseTo(rowCenter(3) + gap);
+  });
+
+  it('draws the box in the default midpoint placement too (box is style, not position)', () => {
+    const r = buildArrows(
+      ctxFor(
+        [ev({ sourceId: 'r0', targetId: 'r2', time: 100, label: '$5' })],
+        fullBand,
+        { styleResolver: filled }, // placement defaults to midpoint
+      ),
+    );
+    // The box belongs to the label style, so it appears at the midpoint too.
+    expect(r.boxes).toHaveLength(1);
+    const label = r.labels[0]!;
+    // Midpoint keeps the original left-anchored text, vertically centred.
+    expect(label.align).toBe('left');
+    const box = r.boxes[0]!.items[0]!;
+    expect(box.y + boxH / 2).toBeCloseTo((rowCenter(0) + rowCenter(2)) / 2);
+    // The box hugs the text: width is the measured text plus padding.
+    expect(box.w).toBe('$5'.length * 6 + 2 * pad);
+    expect(box.h).toBe(boxH);
+  });
+
+  it('applies identical box style across placements — only the position differs', () => {
+    const label = 'abcd';
+    const boxFor = (placement: EventLabelPlacement) =>
+      buildArrows(
+        ctxFor(
+          [ev({ sourceId: 'r0', targetId: 'r2', time: 100, label })],
+          fullBand,
+          { eventLabel: { placement }, styleResolver: filled },
+        ),
+      ).boxes[0]!;
+    const mid = boxFor('midpoint');
+    const node = boxFor('sourceNode');
+    // Same style (colour + measured size) regardless of where it sits …
+    expect(mid.color).toBe(node.color);
+    expect(mid.items[0]!.w).toBe(node.items[0]!.w);
+    expect(mid.items[0]!.h).toBe(node.items[0]!.h);
+    // … only the position changes between the two placements.
+    expect(mid.items[0]!.y).not.toBeCloseTo(node.items[0]!.y);
   });
 });
 

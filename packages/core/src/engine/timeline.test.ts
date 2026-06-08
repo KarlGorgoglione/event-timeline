@@ -819,3 +819,90 @@ describe('TimelineEngine frame-timing seam (§13)', () => {
     engine.dispose();
   });
 });
+
+describe('TimelineEngine measureText cache (§4)', () => {
+  const LABEL = 'streamed-label';
+  // A single inter-row event whose label exercises the boxed label path.
+  const data: TimelineData = {
+    elements: [
+      { id: 'a', label: 'A' },
+      { id: 'b', label: 'B' },
+    ],
+    events: [
+      {
+        id: 'e1',
+        sourceId: 'a',
+        targetId: 'b',
+        time: Date.UTC(2026, 0, 1),
+        label: LABEL,
+      },
+    ],
+  };
+
+  // Controllable rAF so each flush() drives exactly one engine frame.
+  function controllableRaf() {
+    let queued: Array<() => void> = [];
+    vi.stubGlobal('requestAnimationFrame', (cb: () => void) => {
+      queued.push(cb);
+      return queued.length;
+    });
+    return () => {
+      const run = queued;
+      queued = [];
+      for (const cb of run) cb();
+    };
+  }
+
+  // Builds an engine whose base canvas records every label width measurement.
+  // A visible label box (theme background) is what drives measurement, and LOD
+  // is disabled so the label always draws — independent of which placement.
+  function measuringEngine() {
+    const measured: string[] = [];
+    const engine = new TimelineEngine(
+      makeRecordingCanvas((name, args) => {
+        if (name === 'measureText') measured.push(String(args[0]));
+      }),
+      makeRecordingCanvas(() => {}),
+      {
+        // A visible box (via the §11 resolver) is what makes the builder measure
+        // the label width; placement is irrelevant to the cache.
+        styleResolvers: { event: () => ({ labelBoxBackground: '#222' }) },
+        lod: { eventLabelMinPxPerMs: 0 },
+      },
+    );
+    engine.resize(800, 400, 1);
+    return {
+      engine,
+      measured,
+      count: () => measured.filter((t) => t === LABEL).length,
+    };
+  }
+
+  it('reuses the cached width across redraws within a dataset', () => {
+    const flush = controllableRaf();
+    const { engine, measured, count } = measuringEngine();
+    engine.setData(data);
+    flush();
+    expect(count()).toBeGreaterThan(0); // measured once for the boxed label
+
+    measured.length = 0;
+    engine.resize(800, 400, 1); // forces a base redraw, same dataset + camera
+    flush();
+    expect(count()).toBe(0); // served from cache — not re-measured
+    engine.dispose();
+  });
+
+  it('re-measures after setData swaps the dataset (cache cleared)', () => {
+    const flush = controllableRaf();
+    const { engine, measured, count } = measuringEngine();
+    engine.setData(data);
+    flush();
+    expect(count()).toBeGreaterThan(0);
+
+    measured.length = 0;
+    engine.setData(data); // fresh dataset retires the prior measurements
+    flush();
+    expect(count()).toBeGreaterThan(0); // re-measured — no stale cache leak
+    engine.dispose();
+  });
+});
