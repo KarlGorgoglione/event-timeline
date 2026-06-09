@@ -66,9 +66,15 @@ jobs:
 
       # Publish any package whose version isn't on npm yet, via OIDC (no token).
       # Provenance is attested from this workflow's OIDC identity. Idempotent:
-      # already-published versions are skipped, so re-runs are safe.
+      # already-published versions are skipped, so re-runs are safe. For each
+      # freshly published version we also create a matching GitHub Release, with
+      # notes lifted from that version's CHANGELOG.md section (the tags are
+      # lightweight, so --notes-from-tag isn't an option). GH_TOKEN uses the
+      # built-in GITHUB_TOKEN (the job already has contents: write).
       - name: Publish to npm (OIDC trusted publishing)
         if: steps.changesets.outputs.hasChangesets == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           pnpm --filter "./packages/*" run build
           git config user.name "github-actions[bot]"
@@ -85,7 +91,18 @@ jobs:
             fi
             echo "Publishing $name@$version"
             ( cd "$dir" && npm publish --provenance --access public )
-            git tag "$name@$version"
+            tag="$name@$version"
+            git tag "$tag"
+            git push origin "refs/tags/$tag"
+            # Extract this version's section from the package CHANGELOG: the lines
+            # between "## <version>" and the next "## " heading.
+            notes=$(awk -v ver="## $version" '
+              $0 == ver { f = 1; next }
+              f && /^## / { exit }
+              f { print }
+            ' "${dir}CHANGELOG.md")
+            gh release create "$tag" \
+              --title "$tag" \
+              --notes "${notes:-$tag}"
             published=1
           done
-          if [ "$published" = "1" ]; then git push --tags; fi
