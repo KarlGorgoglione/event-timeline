@@ -1,5 +1,5 @@
 import { useCallback, useReducer, useRef } from 'react';
-import { DEFAULT_CONFIG, type DemoConfig } from './config';
+import { initialConfig, type DemoConfig } from './config';
 
 // One reducer, one immutable path updater (§ DRY): every control edits the
 // config through `bind(...path)`, which returns a stable setter for that path.
@@ -44,7 +44,7 @@ export interface DemoConfigApi {
 }
 
 export function useDemoConfig(): DemoConfigApi {
-  const [config, dispatch] = useReducer(reducer, DEFAULT_CONFIG);
+  const [config, dispatch] = useReducer(reducer, undefined, initialConfig);
 
   // Cache one setter per path so controls receive a stable `onChange` identity
   // across renders. The closure captures only the (constant) path, so caching

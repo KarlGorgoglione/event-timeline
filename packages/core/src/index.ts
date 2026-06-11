@@ -37,6 +37,7 @@ export type {
 } from './engine/timeline';
 export type { TimelineEventMap } from './engine/emitter';
 export type { EventLabelPlacement } from './render/specs';
+export type { RendererBackend, RendererPreference } from './render/types';
 
 export { overlayStyle } from './render/resolveStyle';
 export type {

@@ -14,7 +14,7 @@ test('renders 50k events with clusters and no errors', async ({ page }) => {
     if (m.type() === 'error') errors.push(m.text());
   });
 
-  await page.goto('/');
+  await page.goto('/?renderer=canvas2d');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
   // Build + mount the 50k dataset via the panel's dataset selector.
   await page.getByLabel('Dataset').selectOption('synthetic50k');

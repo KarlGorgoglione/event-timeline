@@ -57,6 +57,9 @@ function setup(): BenchApi {
 
   const frames: FrameStats[] = [];
   const engine = new TimelineEngine<DemoDatum>(base, overlay, {
+    // The §13 budgets are calibrated against the Canvas2D backend; 'auto'
+    // would pick WebGL (software GL in CI) and shift the baselines.
+    renderer: 'canvas2d',
     onFrameStats: (stats) => frames.push(stats),
   });
   // DPR is pinned to 1 by the perf project's deviceScaleFactor (§13 baseline).

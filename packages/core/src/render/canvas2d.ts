@@ -7,6 +7,7 @@
 // NOT call ctx.scale; all incoming batch coordinates are already in device
 // pixels. Drawing batches by style minimises context state changes (§4).
 
+import { arrowheadTriangle } from './arrowGeometry';
 import type {
   ArrowheadBatch,
   ImageBatch,
@@ -19,6 +20,7 @@ import type {
 } from './types';
 
 export class Canvas2DRenderer implements Renderer {
+  readonly backend = 'canvas2d' as const;
   private readonly baseCtx: CanvasRenderingContext2D;
   private readonly overlayCtx: CanvasRenderingContext2D;
   private current: CanvasRenderingContext2D;
@@ -26,15 +28,11 @@ export class Canvas2DRenderer implements Renderer {
   constructor(
     private readonly baseCanvas: HTMLCanvasElement,
     private readonly overlayCanvas: HTMLCanvasElement,
-    private background: string,
+    private readonly background: string,
   ) {
     this.baseCtx = getContext(baseCanvas);
     this.overlayCtx = getContext(overlayCanvas);
     this.current = this.baseCtx;
-  }
-
-  setBackground(background: string): void {
-    this.background = background;
   }
 
   resize(deviceWidth: number, deviceHeight: number): void {
@@ -118,24 +116,14 @@ export class Canvas2DRenderer implements Renderer {
     const ctx = this.current;
     const { size } = batch;
     ctx.fillStyle = batch.color;
-    // One path for the whole batch: each item is a triangle pointing +x in local
-    // space (tip at +size), rotated by `angle` and translated to (x, y).
+    // One path for the whole batch; triangle vertices come from the shared
+    // backend geometry so Canvas2D and WebGL cannot drift (§4).
     ctx.beginPath();
     for (const { x, y, angle } of batch.items) {
-      const cos = Math.cos(angle);
-      const sin = Math.sin(angle);
-      const tipX = x + size * cos;
-      const tipY = y + size * sin;
-      // Base corners at local (-0.4·size, ±0.6·size).
-      const bx = -0.4 * size;
-      const wy = 0.6 * size;
-      const x1 = x + bx * cos - wy * sin;
-      const y1 = y + bx * sin + wy * cos;
-      const x2 = x + bx * cos + wy * sin;
-      const y2 = y + bx * sin - wy * cos;
-      ctx.moveTo(tipX, tipY);
-      ctx.lineTo(x1, y1);
-      ctx.lineTo(x2, y2);
+      const v = arrowheadTriangle(x, y, angle, size);
+      ctx.moveTo(v.tipX, v.tipY);
+      ctx.lineTo(v.baseAX, v.baseAY);
+      ctx.lineTo(v.baseBX, v.baseBY);
       ctx.closePath();
     }
     ctx.fill();

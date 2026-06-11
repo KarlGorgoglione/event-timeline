@@ -13,6 +13,7 @@ import {
   VERSION,
   type Formatters,
   type HitResult,
+  type RendererBackend,
   type StyleResolvers,
   type Theme,
   type Time,
@@ -60,6 +61,8 @@ export interface TimelineHandle<TData = unknown> {
   setScrollY(scrollY: number): void;
   select(ids: string[]): void;
   getViewport(): TimelineEventMap<TData>['viewportChange'];
+  /** Which rendering backend the engine selected (DESIGN.md §4). */
+  getRendererBackend(): RendererBackend;
   resize(cssW: number, cssH: number, dpr: number): void;
   setData(data: TimelineData<TData>): void;
   // Streaming methods (DESIGN.md §10): incremental updates that bypass the
@@ -138,6 +141,8 @@ function TimelineInner<TData>(
       setScrollY: (y) => engineRef.current?.setScrollY(y),
       select: (ids) => engineRef.current?.select(ids),
       getViewport: () => engineRef.current?.getViewport() ?? EMPTY_VIEWPORT,
+      getRendererBackend: () =>
+        engineRef.current?.getRendererBackend() ?? 'canvas2d',
       resize: (w, h, dpr) => engineRef.current?.resize(w, h, dpr),
       setData: (d) => engineRef.current?.setData(d),
       addEvents: (e) => engineRef.current?.addEvents(e),
@@ -159,8 +164,19 @@ function TimelineInner<TData>(
       data-testid="timeline-root"
       onPointerMove={onPointerMove}
     >
-      <canvas ref={baseRef} style={canvasStyle} />
-      <canvas ref={overlayRef} style={canvasStyle} />
+      {/* Keyed on the renderer preference: a canvas is permanently bound to
+          its first context type, so switching backends needs fresh elements.
+          Refs re-attach before the engine lifecycle effect re-runs (§12). */}
+      <canvas
+        key={`base-${options?.renderer ?? 'auto'}`}
+        ref={baseRef}
+        style={canvasStyle}
+      />
+      <canvas
+        key={`overlay-${options?.renderer ?? 'auto'}`}
+        ref={overlayRef}
+        style={canvasStyle}
+      />
       <Tooltip
         hit={hover}
         x={pointer.x}

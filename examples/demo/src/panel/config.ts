@@ -81,6 +81,7 @@ export type ClusterKey =
   | 'bySourceTargetColumn';
 export type StreamingLayoutKey = 'stable-append' | 'full';
 export type PlacementKey = 'midpoint' | 'sourceNode';
+export type RendererKey = 'auto' | 'canvas2d' | 'webgl';
 
 export interface ClusteringConfig {
   enabled: boolean;
@@ -89,6 +90,8 @@ export interface ClusteringConfig {
 }
 
 export interface OptionsConfig {
+  /** Rendering backend preference (DESIGN.md §4). */
+  renderer: RendererKey;
   layout: LayoutKey;
   multiSelect: boolean;
   streamingLayout: StreamingLayoutKey;
@@ -179,6 +182,7 @@ function defaultThemeConfig(): ThemeConfig {
 }
 
 const defaultOptionsConfig: OptionsConfig = {
+  renderer: 'auto',
   layout: 'byFirstEvent',
   multiSelect: true,
   streamingLayout: 'stable-append',
@@ -200,6 +204,23 @@ export const DEFAULT_CONFIG: DemoConfig = {
   theme: defaultThemeConfig(),
   options: defaultOptionsConfig,
 };
+
+/**
+ * The initial config, with the renderer optionally pinned via `?renderer=`.
+ * Playwright pixel-reading specs need a deterministic backend — a WebGL-bound
+ * canvas can't hand out a 2D context — so they navigate with the param.
+ */
+export function initialConfig(): DemoConfig {
+  if (typeof location === 'undefined') return DEFAULT_CONFIG;
+  const renderer = new URLSearchParams(location.search).get('renderer');
+  if (renderer === 'auto' || renderer === 'canvas2d' || renderer === 'webgl') {
+    return {
+      ...DEFAULT_CONFIG,
+      options: { ...DEFAULT_CONFIG.options, renderer },
+    };
+  }
+  return DEFAULT_CONFIG;
+}
 
 // --- Built-in look presets -------------------------------------------------
 

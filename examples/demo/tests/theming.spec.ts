@@ -48,7 +48,7 @@ test('theming + data-driven colours/labels render without errors (§11)', async 
     if (m.type() === 'error') errors.push(m.text());
   });
 
-  await page.goto('/');
+  await page.goto('/?renderer=canvas2d');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
 
   // First render: dark default theme → low average luminance, no reddish content.
@@ -123,7 +123,7 @@ test('row separators change the painted pixels and revert cleanly (§11)', async
     if (m.type() === 'error') errors.push(m.text());
   });
 
-  await page.goto('/');
+  await page.goto('/?renderer=canvas2d');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
   await expect
     .poll(async () => (await canvasStats(page))?.avgLum ?? 999, {

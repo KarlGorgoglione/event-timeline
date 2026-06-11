@@ -14,7 +14,7 @@ a numbered phased delivery plan (§15). Read the relevant section before
 implementing — code comments reference these sections by number (e.g. "§5",
 "DESIGN.md §12"). Keep that habit when adding code.
 
-**Current state: Phase 7 complete (live/streaming updates).** Phase 3 (interactions) layered
+**Current state: Phase 7 complete (live/streaming updates) + WebGL backend (§4, §16).** Phase 3 (interactions) layered
 on the Phase 2 renderer: direction-aware orthogonal arrows (riser + source node
 dot + target arrowhead), self-event loop glyphs, event labels, and element
 label+icon at each line start with a sticky-left fallback, all culled by the §5
@@ -99,6 +99,26 @@ deliberately no `maybeFit`, so streaming never jerks the camera) and a
 relayout through the existing debounced `scheduleLayoutRecompute()` seam. The four
 mutations are exposed on the React imperative handle and `streamingLayout` through
 `TimelineOptions`; the demo gains a Stream toggle that appends batches via `addEvents`.
+
+The **WebGL backend** (§4, §16 implementation notes) fills the long-promised
+`Renderer` seam: `render/webgl/` adds a WebGL2 `WebGLRenderer` (one `GlLayer`
+per canvas; a single shader program with solid/SDF-circle/textured fragment
+modes; one order-preserving draw call per engine batch) selected by a
+`createRenderer` factory behind a new `renderer: 'auto' | 'canvas2d' | 'webgl'`
+option (default `'auto'`: WebGL2 only when hardware-accelerated — the probe
+sets `failIfMajorPerformanceCaveat` — every failure path degrades to Canvas2D).
+Look parity is by construction: shared `arrowGeometry.ts`, CPU dash expansion
+with Canvas2D subpath phase (`webgl/dash.ts`), labels rasterized by an
+offscreen 2D canvas into a per-context shelf-packed atlas keyed _including
+colour_ (emoji ignore fillStyle), `measureText` from the same 2D context, and
+premultiplied `(ONE, ONE_MINUS_SRC_ALPHA)` compositing. A canvas is bound to
+its first context type for life, so the React binding keys the canvas elements
+on the preference (backend switch = remount) and `dispose`/fallback paths never
+`loseContext()` on a live canvas (StrictMode remounts re-acquire it). E2E:
+existing pixel-reading specs pin `?renderer=canvas2d` (the demo seeds config
+from that URL param), a parity golden renders WebGL against the Canvas2D
+baseline, `webgl.spec.ts` smokes 10k + backend round-trip, and `bench.ts` pins
+canvas2d so §13 budgets keep their calibration.
 
 When building a feature, find its phase in §15 and its design section first.
 

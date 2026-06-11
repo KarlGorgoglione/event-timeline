@@ -38,8 +38,12 @@ const context2DStub: Partial<CanvasRenderingContext2D> = {
     width: text.length * 6,
   })) as CanvasRenderingContext2D['measureText'],
 };
-HTMLCanvasElement.prototype.getContext = (() =>
-  context2DStub) as unknown as HTMLCanvasElement['getContext'];
+// Only the '2d' id yields the stub: a WebGL2 probe must see null here, like
+// real jsdom, so the renderer factory falls back to Canvas2D (§4).
+HTMLCanvasElement.prototype.getContext = ((contextId: string) =>
+  contextId === '2d'
+    ? context2DStub
+    : null) as unknown as HTMLCanvasElement['getContext'];
 
 // Unmount React trees between tests so the jsdom DOM stays isolated.
 afterEach(() => {

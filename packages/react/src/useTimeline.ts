@@ -17,6 +17,7 @@ import {
   type LayoutStrategy,
   type LodOptions,
   type OnDiagnostic,
+  type RendererPreference,
   type StyleResolvers,
   type Theme,
   type TimelineData,
@@ -25,6 +26,12 @@ import {
 
 export interface TimelineOptions {
   onDiagnostic?: OnDiagnostic;
+  /**
+   * Rendering backend (DESIGN.md §4): `'auto'` (default) picks WebGL2 when
+   * hardware-accelerated, else Canvas2D. Changing this remounts the canvas
+   * elements (a canvas is bound to its first context type for life).
+   */
+  renderer?: RendererPreference;
   /** Vertical row-ordering strategy (DESIGN.md §7). Default `byFirstEvent`. */
   layout?: LayoutStrategy;
   /** Trailing-edge delay (ms) for coalesced incremental re-layout (DESIGN.md §7). */
@@ -96,6 +103,7 @@ export function useTimeline<TData>(
     const engine = new TimelineEngine<TData>(base, overlay, {
       theme,
       onDiagnostic: options?.onDiagnostic,
+      renderer: options?.renderer,
       layout: options?.layout,
       layoutDebounceMs: options?.layoutDebounceMs,
       streamingLayout: options?.streamingLayout,
