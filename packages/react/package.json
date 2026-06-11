@@ -1,6 +1,6 @@
 {
   "name": "@event-timeline/react",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "React binding for the Canvas timeline engine.",
   "license": "MIT",
   "author": "Karl Gorgoglione",
