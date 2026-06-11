@@ -95,7 +95,7 @@ importers:
   packages/react:
     dependencies:
       '@event-timeline/core':
-        specifier: workspace:*
+        specifier: workspace:^
         version: link:../core
     devDependencies:
       '@testing-library/jest-dom':

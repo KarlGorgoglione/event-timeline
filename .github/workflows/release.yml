@@ -18,6 +18,9 @@ name: Release
 # out to the detected package manager (pnpm here), and pnpm 11.x has an open OIDC
 # publish bug (pnpm/pnpm#11513, fix #11526 unreleased). npm's OIDC path is solid,
 # so Changesets handles only versioning and we do the upload with npm directly.
+# The tarball is built with `pnpm pack` first, though: only pnpm rewrites
+# `workspace:` dependency ranges to real semver versions, and npm would upload
+# the manifest verbatim — making the package uninstallable outside pnpm.
 on:
   push:
     branches: [main]
@@ -90,7 +93,12 @@ jobs:
               continue
             fi
             echo "Publishing $name@$version"
-            ( cd "$dir" && npm publish --provenance --access public )
+            # Pack with pnpm so `workspace:` dependency ranges are rewritten to
+            # real semver versions in the tarball manifest (raw `npm publish`
+            # uploads them verbatim, breaking installs from npm/yarn/bun), then
+            # upload with npm so OIDC trusted publishing still applies.
+            tarball=$( cd "$dir" && pnpm pack --pack-destination "$RUNNER_TEMP" | tail -n 1 )
+            npm publish "$tarball" --provenance --access public
             tag="$name@$version"
             git tag "$tag"
             git push origin "refs/tags/$tag"
