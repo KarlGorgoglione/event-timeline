@@ -20,6 +20,8 @@ export interface PanelStatus {
   pxPerMs: number;
   scrollY: number;
   streamed: number;
+  /** The backend the engine actually selected (may differ under 'auto'). */
+  renderer: string;
 }
 
 export interface PanelProps {
@@ -33,12 +35,23 @@ export interface PanelProps {
 export function Panel({ config, bind, apply, onFit, status }: PanelProps) {
   const [collapsed, setCollapsed] = useState(false);
 
-  // Presets swap the look only; reset restores defaults but keeps the dataset.
+  // Presets swap the look only; reset restores defaults. Both keep the
+  // dataset and renderer choices (neither is part of a "look").
   const applyPreset = (
     theme: DemoConfig['theme'],
     options: DemoConfig['options'],
-  ) => apply({ ...config, theme, options });
-  const reset = () => apply({ ...DEFAULT_CONFIG, dataset: config.dataset });
+  ) =>
+    apply({
+      ...config,
+      theme,
+      options: { ...options, renderer: config.options.renderer },
+    });
+  const reset = () =>
+    apply({
+      ...DEFAULT_CONFIG,
+      dataset: config.dataset,
+      options: { ...DEFAULT_CONFIG.options, renderer: config.options.renderer },
+    });
 
   if (collapsed) {
     return (
@@ -111,6 +124,7 @@ export function Panel({ config, bind, apply, onFit, status }: PanelProps) {
         <span data-testid="status-pxperms">pxPerMs: {status.pxPerMs}</span>
         <span data-testid="status-scrolly">scrollY: {status.scrollY}</span>
         <span data-testid="status-streamed">streamed: {status.streamed}</span>
+        <span data-testid="status-renderer">renderer: {status.renderer}</span>
       </footer>
     </aside>
   );

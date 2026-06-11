@@ -97,6 +97,7 @@ export function buildTheme(t: ThemeConfig): Partial<Theme> {
 
 export function buildOptions(o: OptionsConfig): TimelineOptions {
   return {
+    renderer: o.renderer,
     layout: LAYOUTS[o.layout],
     multiSelect: o.multiSelect,
     streamingLayout: o.streamingLayout,

@@ -26,6 +26,8 @@ export type {
   TickFormatter,
   FrameStats,
   ClusterStrategy,
+  RendererBackend,
+  RendererPreference,
 } from '@event-timeline/core';
 
 // Built-in layout strategies (DESIGN.md §7), so hosts can name one in `options`.

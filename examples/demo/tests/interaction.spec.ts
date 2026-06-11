@@ -28,7 +28,7 @@ async function rootBox(page: Page) {
 test('hovering an element line shows a tooltip and updates the status bar', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/?renderer=canvas2d');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
 
   const box = await rootBox(page);
@@ -52,7 +52,7 @@ test('hovering an element line shows a tooltip and updates the status bar', asyn
 test('clicking a primitive selects it (status + overlay highlight)', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/?renderer=canvas2d');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
 
   const box = await rootBox(page);
@@ -96,7 +96,7 @@ test('clicking a primitive selects it (status + overlay highlight)', async ({
 test('ctrl+wheel zooms about the cursor (pxPerMs increases)', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/?renderer=canvas2d');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
   // Wait for the first viewport emission (auto-fit).
   await expect
@@ -149,7 +149,7 @@ async function baseCanvasHash(page: Page): Promise<number> {
 test('editing a panel parameter preserves pan/zoom (no camera reset, §12)', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/?renderer=canvas2d');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
   // Tall dataset so vertical scroll has somewhere to go.
   await page.getByLabel('Dataset').selectOption('synthetic10k');
@@ -214,7 +214,7 @@ test('editing a panel parameter preserves pan/zoom (no camera reset, §12)', asy
 test('vertical wheel scrolls the tall dataset (scrollY increases)', async ({
   page,
 }) => {
-  await page.goto('/');
+  await page.goto('/?renderer=canvas2d');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
   // 200-row synthetic set, selected via the panel's dataset selector.
   await page.getByLabel('Dataset').selectOption('synthetic10k');

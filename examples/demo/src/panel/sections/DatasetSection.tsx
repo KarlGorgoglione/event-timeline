@@ -4,7 +4,7 @@ import {
   ToggleField,
   type SelectOption,
 } from '../controls';
-import type { DatasetKey } from '../config';
+import type { DatasetKey, RendererKey } from '../config';
 import type { SectionViewProps } from './types';
 
 const DATASETS: ReadonlyArray<SelectOption<DatasetKey>> = [
@@ -12,6 +12,12 @@ const DATASETS: ReadonlyArray<SelectOption<DatasetKey>> = [
   { value: 'aml', label: 'AML scenario' },
   { value: 'synthetic10k', label: '10k synthetic' },
   { value: 'synthetic50k', label: '50k synthetic' },
+];
+
+const RENDERERS: ReadonlyArray<SelectOption<RendererKey>> = [
+  { value: 'auto', label: 'Auto' },
+  { value: 'canvas2d', label: 'Canvas 2D' },
+  { value: 'webgl', label: 'WebGL' },
 ];
 
 interface DatasetSectionProps extends SectionViewProps {
@@ -26,6 +32,12 @@ export function DatasetSection({ config, bind, onFit }: DatasetSectionProps) {
         value={config.dataset}
         options={DATASETS}
         onChange={bind<DatasetKey>('dataset')}
+      />
+      <SelectField<RendererKey>
+        label="Renderer"
+        value={config.options.renderer}
+        options={RENDERERS}
+        onChange={bind<RendererKey>('options', 'renderer')}
       />
       <ToggleField
         label="Live stream"

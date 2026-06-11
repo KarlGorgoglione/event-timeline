@@ -65,6 +65,14 @@ export function App() {
   const [selected, setSelected] = useState<string[]>([]);
   const [viewport, setViewport] = useState({ pxPerMs: 0, scrollY: 0 });
   const [streamCount, setStreamCount] = useState(0);
+  // The backend the engine actually picked (may differ from the preference
+  // under 'auto'). `ready` re-fires on every engine rebuild, so this tracks
+  // renderer switches from the panel.
+  const [backend, setBackend] = useState('—');
+  const onReady = useCallback(
+    () => setBackend(ref.current?.getRendererBackend() ?? '—'),
+    [],
+  );
   // Latest visible time window — streamed batches land inside it so new events
   // appear wherever the user is looking. A ref avoids re-running the interval
   // effect on every pan/zoom; the counter keeps streamed ids unique across
@@ -195,6 +203,7 @@ export function App() {
         styleResolvers={styleResolvers}
         formatters={formatters}
         renderTooltip={renderTooltip}
+        onReady={onReady}
         onHover={onHover}
         onSelectionChange={onSelectionChange}
         onViewportChange={onViewportChange}
@@ -211,6 +220,7 @@ export function App() {
           pxPerMs: viewport.pxPerMs,
           scrollY: viewport.scrollY,
           streamed: streamCount,
+          renderer: backend,
         }}
       />
     </main>

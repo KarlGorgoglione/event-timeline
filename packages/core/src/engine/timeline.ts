@@ -23,7 +23,7 @@ import type {
   Time,
 } from '../model/types';
 import { buildArrows } from '../render/arrows';
-import { Canvas2DRenderer } from '../render/canvas2d';
+import { createRenderer } from '../render/createRenderer';
 import {
   hairlineOffset,
   scaleFontToDevice,
@@ -50,7 +50,12 @@ import type {
   LodConfig,
   ResolveIcon,
 } from '../render/specs';
-import type { LineSegment } from '../render/types';
+import type {
+  LineSegment,
+  Renderer,
+  RendererBackend,
+  RendererPreference,
+} from '../render/types';
 import {
   Camera,
   computeZoomBounds,
@@ -136,6 +141,14 @@ export interface Formatters<TData = unknown> {
 export interface TimelineEngineOptions<TData = unknown> {
   theme?: Partial<Theme>;
   onDiagnostic?: OnDiagnostic;
+  /**
+   * Rendering backend (DESIGN.md §4, §16). `'auto'` (default) uses WebGL2 when
+   * it is available and hardware-accelerated, falling back to Canvas2D;
+   * `'webgl'` forces WebGL2 whenever the API exists (even software-rendered);
+   * `'canvas2d'` skips probing. Note a canvas is permanently bound to its
+   * first context type — switching backends needs fresh canvas elements.
+   */
+  renderer?: RendererPreference;
   layout?: LayoutStrategy;
   /**
    * Trailing-edge delay (ms) for coalescing incremental re-layouts (DESIGN.md
@@ -190,7 +203,7 @@ export class TimelineEngine<TData = unknown> {
   private readonly metrics: RowMetrics;
   private readonly store: DataStore<TData>;
   private readonly camera: Camera;
-  private readonly renderer: Canvas2DRenderer;
+  private readonly renderer: Renderer;
   private readonly scheduler: FrameScheduler;
   private readonly emitter = new TypedEmitter<TimelineEventMap<TData>>();
   private readonly pointer: PointerController;
@@ -349,10 +362,19 @@ export class TimelineEngine<TData = unknown> {
     this.onFrameStats = options.onFrameStats;
     this.store = new DataStore<TData>({ onDiagnostic: options.onDiagnostic });
     this.camera = new Camera(this.metrics);
-    this.renderer = new Canvas2DRenderer(
+    this.renderer = createRenderer(
       baseCanvas,
       overlayCanvas,
       this.theme.background,
+      {
+        preference: options.renderer ?? 'auto',
+        // A restored GL context comes back blank; re-measure defensively and
+        // redraw (the overlay redraws with the base, §4).
+        onContextRestored: () => {
+          this.measureCache.clear();
+          this.scheduler.markDirty('base');
+        },
+      },
     );
     this.scheduler = new FrameScheduler((dirty) => this.drawFrame(dirty));
     // The overlay is the topmost layer, so it receives pointer events; the
@@ -520,11 +542,18 @@ export class TimelineEngine<TData = unknown> {
     this.emitter.off(key, fn);
   }
 
+  /** Which backend the renderer factory selected (§4): for host diagnostics. */
+  getRendererBackend(): RendererBackend {
+    return this.renderer.backend;
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
     this.debouncedRecomputeLayout.cancel();
+    // Scheduler first so no draw can touch released GPU resources.
     this.scheduler.dispose();
+    this.renderer.dispose?.();
     this.pointer.dispose();
     this.emitter.clear();
   }

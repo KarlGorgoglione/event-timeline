@@ -12,6 +12,17 @@
 
 export type Layer = 'base' | 'overlay';
 
+/** The concrete backend behind the seam (§4). */
+export type RendererBackend = 'canvas2d' | 'webgl';
+
+/**
+ * Host preference for backend selection (§4, §16). `'auto'` (the default)
+ * picks WebGL2 when it is hardware-accelerated and falls back to Canvas2D;
+ * `'webgl'` forces WebGL2 whenever the API exists (even software-rendered);
+ * `'canvas2d'` skips probing entirely.
+ */
+export type RendererPreference = 'auto' | RendererBackend;
+
 /** Backend-neutral text metrics (no DOM TextMetrics leak). */
 export interface TextMetricsLite {
   width: number;
@@ -102,6 +113,8 @@ export interface ImageBatch {
 }
 
 export interface Renderer {
+  /** Which backend this instance is (§4) — e.g. for host diagnostics. */
+  readonly backend: RendererBackend;
   resize(deviceWidth: number, deviceHeight: number): void;
   /** Clear/prepare a layer for drawing. */
   beginFrame(layer: Layer): void;
@@ -121,4 +134,6 @@ export interface Renderer {
   /** Caller caches results (§4). */
   measureText(text: string, font: string): TextMetricsLite;
   endFrame(layer: Layer): void;
+  /** Release backend resources (GPU memory, listeners). Optional: Canvas2D has none. */
+  dispose?(): void;
 }

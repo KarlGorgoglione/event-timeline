@@ -14,7 +14,7 @@ test('renders 10k events with no errors and a non-blank canvas', async ({
     if (m.type() === 'error') errors.push(m.text());
   });
 
-  await page.goto('/');
+  await page.goto('/?renderer=canvas2d');
   await expect(page.getByTestId('timeline-root')).toBeVisible();
   // Swap in the 10k dataset via the panel's dataset selector.
   await page.getByLabel('Dataset').selectOption('synthetic10k');

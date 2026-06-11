@@ -32,14 +32,14 @@ interface so a WebGL backend can be added later without rewriting the engine.
 
 | Decision | Choice |
 | --- | --- |
-| Rendering | **Canvas 2D** behind a swappable `Renderer` interface (WebGL later) |
+| Rendering | **Canvas 2D** behind a swappable `Renderer` interface, plus a **WebGL2** backend auto-selected when hardware-accelerated (§16 notes) |
 | Scale target | **~50k events / 1000s of lines**, smooth at 60fps |
 | Packaging | **Agnostic TS core** + **thin React wrapper** (monorepo) |
 | Time granularity | **Date-level** (day is finest); zoom decade→year→month→day |
 | Arrow routing | **Orthogonal** (right-angle riser) by default |
 | Cash / external flows | **No special handling** — host supplies them as ordinary elements |
 | v1 interactions | Pan, zoom, **hover tooltips/highlight**, **click & selection**, **live/streaming updates**, **event collapsing/aggregation**, **auto-layout ordering** |
-| Out of scope (v1) | Drag-to-reorder rows, WebGL backend, duration/range items, accessibility tree |
+| Out of scope (v1) | Drag-to-reorder rows, duration/range items, accessibility tree |
 
 ---
 
@@ -775,7 +775,8 @@ Each phase ends with a runnable demo and explicit acceptance criteria.
 
 ## 16. Risks, Open Questions & Future Work
 
-- **WebGL backend** (post-v1) for 100k+; the `Renderer` interface is the seam.
+- **WebGL backend** — ✅ shipped (see "WebGL backend implementation notes"
+  below). The `Renderer` interface was the seam, as designed.
 - **Duration/range items** (vis-timeline-style bars on a line) — not modelled in
   v1; the `Event` type could later gain an `endTime`.
 - **Orthogonal arrow congestion**: many risers at the same x need sub-lane
@@ -789,6 +790,52 @@ Each phase ends with a runnable demo and explicit acceptance criteria.
   out of scope for v1.
 - **Minimap / overview**, **PNG export**, **inertia panning** — deferred
   enhancements.
+
+### WebGL backend implementation notes
+
+`WebGLRenderer` (`render/webgl/`) implements the §4 seam over **WebGL2 only**
+(the fallback is Canvas2D, not WebGL1). Selection lives in a
+`createRenderer` factory driven by `TimelineEngineOptions.renderer`
+(`'auto' | 'canvas2d' | 'webgl'`, default `'auto'`):
+
+- **Auto policy.** `'auto'` probes WebGL2 with
+  `failIfMajorPerformanceCaveat: true` — on software GL, Canvas2D is usually
+  faster — while explicit `'webgl'` drops the flag and forces WebGL2 whenever
+  the API exists. The probe runs on a scratch canvas first, because a canvas
+  is permanently bound to its first context type; every failure path degrades
+  to Canvas2D (§1 lenient). The React binding keys the canvas elements on the
+  preference so a backend switch remounts fresh canvases.
+- **Architecture.** Two GL contexts, one per canvas layer, each wrapped in a
+  `GlLayer` (program, VAO, one DYNAMIC_DRAW vertex buffer, texture caches);
+  CPU-side work (text rasterizer, colour cache, vertex scratch) is shared.
+  One shader program with a uniform fragment-mode switch (solid / SDF circle /
+  textured) and a `[x, y, u, v]` vertex layout; one order-preserving draw call
+  per engine batch — the same painter's-algorithm granularity as Canvas2D.
+- **Compositing parity.** Context attrs `{ alpha, antialias,
+  premultipliedAlpha, preserveDrawingBuffer: false, no depth/stencil }`;
+  premultiplied colours with `(ONE, ONE_MINUS_SRC_ALPHA)` blending. The base
+  layer clears to the parsed theme background, the overlay to transparent.
+  `preserveDrawingBuffer: false` is safe because each layer is fully redrawn
+  within one rAF callback (`drawFrame`).
+- **Parity by construction.** Arrowhead geometry is shared with Canvas2D
+  (`render/arrowGeometry.ts`); dashes are CPU-expanded with per-segment phase
+  (matching `moveTo` subpath semantics); text is rasterized by an offscreen 2D
+  canvas — Canvas2D's own baseline/kerning/colour-emoji behaviour — into a
+  per-context shelf-packed atlas whose key includes the colour (emoji ignore
+  fillStyle, so tint-in-shader would break them); `measureText` uses the same
+  2D context, so layout is identical across backends.
+- **Lifecycle.** `webglcontextlost` suspends draw verbs; restore rebuilds GL
+  objects, invalidates texture caches, and asks the engine to redraw.
+  `dispose` deletes GL objects but deliberately does **not** `loseContext()` —
+  a remount on the same canvas (React StrictMode) re-acquires the same
+  context, and a lost one would be unusable forever.
+- **Testing.** Pure modules (dash, colour, shelf packing, vertex builders,
+  factory fallback) are unit-tested in the node env; the golden suite pins
+  existing baselines to `?renderer=canvas2d` and adds a parity test that
+  renders the fixture under WebGL against the same Canvas2D baseline (looser
+  diff ratio for AA); a WebGL smoke spec covers 10k rendering, zooming, and
+  the backend-switch round-trip. The §13 perf budgets stay calibrated against
+  Canvas2D (`bench.ts` pins `renderer: 'canvas2d'`).
 
 ### Phase 1 implementation notes & follow-ups
 
