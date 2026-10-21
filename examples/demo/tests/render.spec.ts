@@ -1,7 +1,8 @@
 import { expect, test } from '@playwright/test';
+import { openFixture } from './fixturePage';
 
-// Phase 2 acceptance (DESIGN.md §15): 10k synthetic events render correctly and
-// culled. The lightest meaningful signal: the demo mounts the 10k dataset with
+// Rendering at scale (DESIGN.md §4, §5): 10k synthetic events render correctly and
+// culled. The lightest meaningful signal: the 10k dataset mounts with
 // no page/console errors (culling keeps it from hanging) and the base canvas has
 // drawn non-background pixels in the content band (arrows/lines actually drew).
 
@@ -14,10 +15,7 @@ test('renders 10k events with no errors and a non-blank canvas', async ({
     if (m.type() === 'error') errors.push(m.text());
   });
 
-  await page.goto('/?renderer=canvas2d');
-  await expect(page.getByTestId('timeline-root')).toBeVisible();
-  // Swap in the 10k dataset via the panel's dataset selector.
-  await page.getByLabel('Dataset').selectOption('synthetic10k');
+  await openFixture(page, { dataset: 'synthetic10k' });
 
   // Poll the base canvas until content (anything not the #161b22 background)
   // appears in the central content band, below the header.

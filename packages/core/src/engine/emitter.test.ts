@@ -6,8 +6,12 @@ describe('TypedEmitter', () => {
     const emitter = new TypedEmitter<TimelineEventMap>();
     const fn = vi.fn();
     emitter.on('dataChange', fn);
-    emitter.emit('dataChange', { added: 3, removed: 0, updated: 0 });
-    expect(fn).toHaveBeenCalledWith({ added: 3, removed: 0, updated: 0 });
+    const counts = {
+      elements: { added: 3, removed: 0, updated: 0 },
+      events: { added: 0, removed: 0, updated: 0 },
+    };
+    emitter.emit('dataChange', counts);
+    expect(fn).toHaveBeenCalledWith(counts);
   });
 
   it('stops delivery after unsubscribe', () => {

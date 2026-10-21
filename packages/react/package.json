@@ -50,12 +50,12 @@
     "dev": "tsup --watch",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@event-timeline/core": "workspace:^"
+  },
   "peerDependencies": {
     "react": ">=18",
     "react-dom": ">=18"
-  },
-  "dependencies": {
-    "@event-timeline/core": "workspace:^"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.6.3",

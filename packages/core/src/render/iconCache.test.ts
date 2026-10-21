@@ -25,6 +25,7 @@ describe('isIconUrl (§1)', () => {
 });
 
 class FakeImage {
+  crossOrigin: string | null = null;
   onload: (() => void) | null = null;
   onerror: (() => void) | null = null;
   complete = false;
@@ -81,6 +82,31 @@ describe('IconCache (§1, §11)', () => {
     cache.get('a.png');
     cache.get('a.png');
     expect(created).toHaveLength(1);
+  });
+
+  it('requests remote icons with CORS so WebGL may upload them', () => {
+    const created = stubImages();
+    const cache = new IconCache(vi.fn());
+    cache.get('https://cdn.example/a.png');
+    cache.get('data:image/png;base64,AAAA');
+    expect(created[0]!.crossOrigin).toBe('anonymous');
+    expect(created[1]!.crossOrigin).toBeNull();
+  });
+
+  it('retries without CORS when the CORS request fails, then reports a final failure', () => {
+    const created = stubImages();
+    const diagnostics: string[] = [];
+    const cache = new IconCache(vi.fn(), (d) => diagnostics.push(d.code));
+    cache.get('https://cdn.example/a.png');
+
+    created[0]!.onerror?.();
+    expect(created).toHaveLength(2);
+    expect(created[1]!.crossOrigin).toBeNull();
+    expect(diagnostics).toEqual([]);
+
+    created[1]!.onerror?.();
+    expect(diagnostics).toEqual(['icon-failed']);
+    expect(created).toHaveLength(2);
   });
 
   it('is SSR-safe when Image is unavailable', () => {

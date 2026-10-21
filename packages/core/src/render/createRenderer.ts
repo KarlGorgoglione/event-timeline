@@ -1,98 +1,104 @@
-// Backend selection for the Renderer seam (DESIGN.md §4, §16).
+// Backend selection for the base layer (DESIGN.md §4).
 //
 // `'auto'` (the default) picks WebGL2 when it is available *and* hardware
 // accelerated — on software GL (e.g. SwiftShader) Canvas2D is typically
-// faster, so the probe sets failIfMajorPerformanceCaveat. An explicit
-// `'webgl'` preference drops that flag and forces WebGL2 whenever the API
-// exists. Every failure path falls back to Canvas2D (lenient, §1): a renderer
-// that draws beats a thrown error.
+// faster, so it asks for failIfMajorPerformanceCaveat. An explicit `'webgl'`
+// drops that flag. Every failure path degrades: WebGL → Canvas2D → a renderer
+// that draws nothing, so a broken environment never throws out of the engine.
 //
-// A canvas is permanently bound to its first context type, so the probe runs
-// on a scratch canvas first; the real canvases are only touched once the
-// scratch probe succeeds.
+// A canvas is bound to its first context type for life, so each attempt runs
+// on a fresh canvas supplied by the caller (the engine owns its canvases).
 
-import { Canvas2DRenderer } from './canvas2d';
+import type { OnDiagnostic } from '../model/diagnostics';
+import { tryCanvas2D } from './canvas2d';
+import { NullRenderer } from './nullRenderer';
 import type { Renderer, RendererPreference } from './types';
-import { GL_CONTEXT_ATTRIBUTES } from './webgl/layer';
 import { WebGLRenderer } from './webgl/webglRenderer';
+import { GL_CONTEXT_ATTRIBUTES } from './webgl/resources';
 
-export interface CreateRendererOptions {
-  /** Backend preference (§4). Default `'auto'`. */
-  preference?: RendererPreference;
+export interface CreateBaseRendererOptions {
+  preference: RendererPreference;
+  /** Returns a new canvas installed in the base slot, replacing any earlier one. */
+  freshCanvas: () => HTMLCanvasElement;
   /** Invoked after a lost WebGL context is restored; the host should redraw. */
   onContextRestored?: () => void;
+  /** Invoked when the WebGL context is lost (the host may fall back). */
+  onContextLost?: () => void;
+  onDiagnostic: OnDiagnostic;
 }
 
-export function createRenderer(
-  baseCanvas: HTMLCanvasElement,
-  overlayCanvas: HTMLCanvasElement,
-  background: string,
-  options: CreateRendererOptions = {},
+export function createBaseRenderer(
+  options: CreateBaseRendererOptions,
 ): Renderer {
-  const preference = options.preference ?? 'auto';
-  if (preference !== 'canvas2d' && webgl2Probes(baseCanvas, preference)) {
-    const attrs: WebGLContextAttributes = {
-      ...GL_CONTEXT_ATTRIBUTES,
-      failIfMajorPerformanceCaveat: preference === 'auto',
-    };
-    // Acquire both contexts before constructing any GL resource, so a mixed
-    // failure can release the half-acquired context and still fall back.
-    const baseGl = getWebGL2(baseCanvas, attrs);
-    const overlayGl = getWebGL2(overlayCanvas, attrs);
-    if (baseGl !== null && overlayGl !== null) {
-      try {
-        return new WebGLRenderer(
-          baseCanvas,
-          baseGl,
-          overlayCanvas,
-          overlayGl,
-          background,
-          options.onContextRestored,
-        );
-      } catch {
-        // Deliberately no loseContext here: the canvases are webgl-bound for
-        // life either way, and a later rebuild on them can only succeed if
-        // their contexts are still usable. Fall through to Canvas2D, which
-        // throws a descriptive error on a webgl-bound canvas.
-      }
-    }
+  const { preference, freshCanvas, onDiagnostic } = options;
+  if (preference !== 'canvas2d') {
+    const webgl = tryWebGL(freshCanvas(), preference, options);
+    if (webgl !== null) return webgl;
   }
-  return new Canvas2DRenderer(baseCanvas, overlayCanvas, background);
+  return createCanvas2DRenderer(freshCanvas(), onDiagnostic);
 }
 
-/** Probe WebGL2 on a scratch canvas, never committing the real ones. */
-function webgl2Probes(
-  baseCanvas: HTMLCanvasElement,
+/** The Canvas2D renderer for `canvas`, or a no-op renderer when it has no 2D context. */
+export function createCanvas2DRenderer(
+  canvas: HTMLCanvasElement,
+  onDiagnostic: OnDiagnostic,
+): Renderer {
+  const renderer = tryCanvas2D(canvas);
+  if (renderer !== null) return renderer;
+  onDiagnostic({
+    code: 'renderer-fallback',
+    kind: 'renderer',
+    reason: 'no 2D canvas context is available; nothing will be drawn',
+  });
+  return new NullRenderer();
+}
+
+function tryWebGL(
+  canvas: HTMLCanvasElement,
   preference: RendererPreference,
-): boolean {
-  // Instant out in SSR/jsdom, where the API doesn't exist at all.
-  if (typeof WebGL2RenderingContext === 'undefined') return false;
+  options: CreateBaseRendererOptions,
+): Renderer | null {
+  // Explicit WebGL that can't be honoured is worth reporting; 'auto' falling
+  // back on a machine without hardware GL is the expected path.
+  const report = (reason: string): void => {
+    if (preference !== 'webgl') return;
+    options.onDiagnostic({
+      code: 'renderer-fallback',
+      kind: 'renderer',
+      reason,
+    });
+  };
+  if (typeof WebGL2RenderingContext === 'undefined') {
+    report('WebGL2 is not supported here; using Canvas2D');
+    return null;
+  }
+  let gl: WebGL2RenderingContext | null = null;
   try {
-    const scratch = baseCanvas.ownerDocument.createElement('canvas');
-    const gl = scratch.getContext('webgl2', {
+    const context = canvas.getContext('webgl2', {
       ...GL_CONTEXT_ATTRIBUTES,
       failIfMajorPerformanceCaveat: preference === 'auto',
     });
-    if (gl === null || !(gl instanceof WebGL2RenderingContext)) return false;
-    releaseContext(gl);
-    return true;
+    gl = context instanceof WebGL2RenderingContext ? context : null;
   } catch {
-    return false;
+    gl = null;
   }
-}
-
-function getWebGL2(
-  canvas: HTMLCanvasElement,
-  attrs: WebGLContextAttributes,
-): WebGL2RenderingContext | null {
-  try {
-    const gl = canvas.getContext('webgl2', attrs);
-    return gl instanceof WebGL2RenderingContext ? gl : null;
-  } catch {
+  if (gl === null) {
+    report('could not create a WebGL2 context; using Canvas2D');
     return null;
   }
-}
-
-function releaseContext(gl: WebGL2RenderingContext | null): void {
-  gl?.getExtension('WEBGL_lose_context')?.loseContext();
+  try {
+    return new WebGLRenderer(canvas, gl, {
+      onContextRestored: options.onContextRestored,
+      onContextLost: options.onContextLost,
+      onDiagnostic: options.onDiagnostic,
+    });
+  } catch (error) {
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    options.onDiagnostic({
+      code: 'renderer-fallback',
+      kind: 'renderer',
+      reason: `WebGL2 setup failed (${error instanceof Error ? error.message : String(error)}); using Canvas2D`,
+    });
+    return null;
+  }
 }

@@ -1,184 +1,134 @@
 // React ↔ engine bridge (DESIGN.md §12).
 //
-// Instantiates the core engine once, owns the ResizeObserver, and syncs props
-// to the engine imperatively so React stays out of the render loop. All
-// browser APIs (ResizeObserver, devicePixelRatio) are touched inside effects,
-// never at import/render, keeping the binding SSR-safe; setup/teardown is
-// idempotent so React StrictMode's double-invoke is safe.
+// Creates one engine per component instance and mounts it into the container;
+// the engine owns its canvases, resizing and DPR tracking. Props are synced
+// imperatively after each render, sending only fields that actually changed
+// (compared structurally), so inline objects never rebuild or even redraw the
+// engine, and React stays out of the render loop. Browser APIs are only
+// touched inside effects, keeping the binding SSR-safe; setup and teardown are
+// idempotent, so StrictMode's double mount is harmless.
 
-import { useEffect, useRef, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, type RefObject } from 'react';
 import {
   TimelineEngine,
-  type ClusteringOptions,
-  type EventLabelPlacement,
-  type Formatters,
+  type Diagnostic,
   type FrameStats,
+  type Formatters,
   type HitResult,
-  type LayoutStrategy,
-  type LodOptions,
-  type OnDiagnostic,
-  type RendererPreference,
+  type Selection,
   type StyleResolvers,
-  type Theme,
+  type ThemeInput,
   type TimelineData,
   type TimelineEventMap,
+  type TimelineOptions as EngineOptions,
 } from '@event-timeline/core';
+import { changedFields } from './optionsDiff';
 
-export interface TimelineOptions {
-  onDiagnostic?: OnDiagnostic;
-  /**
-   * Rendering backend (DESIGN.md §4): `'auto'` (default) picks WebGL2 when
-   * hardware-accelerated, else Canvas2D. Changing this remounts the canvas
-   * elements (a canvas is bound to its first context type for life).
-   */
-  renderer?: RendererPreference;
-  /** Vertical row-ordering strategy (DESIGN.md §7). Default `byFirstEvent`. */
-  layout?: LayoutStrategy;
-  /** Trailing-edge delay (ms) for coalesced incremental re-layout (DESIGN.md §7). */
-  layoutDebounceMs?: number;
-  /** Re-layout policy for streaming mutations (DESIGN.md §7, §10). Default stable-append. */
-  streamingLayout?: 'stable-append' | 'full';
-  /** Allow `ctrl`/`⌘`+click to extend the selection (DESIGN.md §9). */
-  multiSelect?: boolean;
-  /** Event collapsing/aggregation config (DESIGN.md §6). */
-  clustering?: ClusteringOptions;
-  /** Level-of-detail config, e.g. the event-label zoom threshold (DESIGN.md §6). */
-  lod?: LodOptions;
-  /** Event-label placement (DESIGN.md §11): `'sourceNode'` or `'midpoint'` (default). Style is identical across placements. */
-  eventLabel?: { placement?: EventLabelPlacement };
-  /** Optional per-frame timing sink for benchmarking (DESIGN.md §13). */
-  onFrameStats?: (stats: FrameStats) => void;
-}
+/**
+ * Engine options for the `options` prop: every runtime engine option except
+ * the ones with their own props (`theme`, `styleResolvers`, `formatters`).
+ * Fields are compared by content, so passing them inline is fine.
+ */
+export type TimelineOptions<TData = unknown> = Omit<
+  EngineOptions<TData>,
+  'theme' | 'styleResolvers' | 'formatters'
+>;
 
 export interface UseTimelineArgs<TData> {
-  baseRef: RefObject<HTMLCanvasElement | null>;
-  overlayRef: RefObject<HTMLCanvasElement | null>;
   containerRef: RefObject<HTMLElement | null>;
   data?: TimelineData<TData>;
-  theme?: Partial<Theme>;
-  options?: TimelineOptions;
-  /** Data-driven per-item style overrides (DESIGN.md §11, §12). */
+  theme?: ThemeInput;
+  options?: TimelineOptions<TData>;
   styleResolvers?: StyleResolvers<TData>;
-  /** Label/tick text formatters (DESIGN.md §11, §12). */
   formatters?: Formatters<TData>;
   onReady?: () => void;
+  onFirstFrame?: () => void;
   onViewportChange?: (v: TimelineEventMap<TData>['viewportChange']) => void;
   onDataChange?: (d: TimelineEventMap<TData>['dataChange']) => void;
   onHover?: (hit: HitResult<TData> | null) => void;
   onClick?: (e: TimelineEventMap<TData>['click']) => void;
-  onSelectionChange?: (ids: string[]) => void;
+  onSelectionChange?: (selection: Selection) => void;
 }
+
+// useLayoutEffect warns during server rendering; nothing runs there anyway.
+const useIsomorphicLayoutEffect =
+  typeof window === 'undefined' ? useEffect : useLayoutEffect;
 
 export function useTimeline<TData>(
   args: UseTimelineArgs<TData>,
 ): RefObject<TimelineEngine<TData> | null> {
-  const { baseRef, overlayRef, containerRef, data, theme, options } = args;
-  const { styleResolvers, formatters } = args;
+  const { containerRef, data } = args;
   const engineRef = useRef<TimelineEngine<TData> | null>(null);
-
-  // Keep the latest callbacks/data in refs so the setup effect doesn't re-run
-  // when the host passes fresh inline functions each render.
-  const callbacks = useRef(args);
-  callbacks.current = args;
-  const dataRef = useRef(data);
-  dataRef.current = data;
+  const latest = useRef(args);
+  latest.current = args;
+  const applied = useRef<EngineOptions<TData>>({});
   const appliedData = useRef<TimelineData<TData> | undefined>(undefined);
-  // Camera snapshot carried across an engine rebuild (§12). The lifecycle effect
-  // below re-creates the engine on any theme/options/resolvers/formatters
-  // reference change; a fresh engine auto-fits, which would otherwise throw away
-  // the user's pan/zoom on every such edit. The previous run's cleanup stows the
-  // viewport here so the new engine can restore it instead of snapping to fit.
-  const preservedViewport = useRef<
-    TimelineEventMap<TData>['viewportChange'] | null
-  >(null);
 
-  // Engine lifecycle. Re-creates only when theme/options change by reference
-  // (hosts memoize these — §12 referential-stability contract).
-  useEffect(() => {
-    const base = baseRef.current;
-    const overlay = overlayRef.current;
-    const container = containerRef.current;
-    if (base === null || overlay === null || container === null) return;
+  // Stable forwarders, so inline sink callbacks never count as a change.
+  const sinks = useRef({
+    onDiagnostic: (d: Diagnostic) => latest.current.options?.onDiagnostic?.(d),
+    onFrameStats: (s: FrameStats) => latest.current.options?.onFrameStats?.(s),
+  });
 
-    const engine = new TimelineEngine<TData>(base, overlay, {
+  const engineOptions = (): EngineOptions<TData> => {
+    const { options, theme, styleResolvers, formatters } = latest.current;
+    return {
+      ...options,
       theme,
-      onDiagnostic: options?.onDiagnostic,
-      renderer: options?.renderer,
-      layout: options?.layout,
-      layoutDebounceMs: options?.layoutDebounceMs,
-      streamingLayout: options?.streamingLayout,
-      multiSelect: options?.multiSelect,
-      clustering: options?.clustering,
-      lod: options?.lod,
-      eventLabel: options?.eventLabel,
-      onFrameStats: options?.onFrameStats,
       styleResolvers,
       formatters,
-    });
-    engineRef.current = engine;
+      onDiagnostic: options?.onDiagnostic
+        ? sinks.current.onDiagnostic
+        : undefined,
+      onFrameStats: options?.onFrameStats
+        ? sinks.current.onFrameStats
+        : undefined,
+    };
+  };
 
+  // Engine lifecycle: one engine for the component's lifetime.
+  useIsomorphicLayoutEffect(() => {
+    const container = containerRef.current;
+    if (container === null) return;
+    const initial = engineOptions();
+    const engine = new TimelineEngine<TData>(initial);
+    applied.current = initial;
+    const cb = latest;
     const off = [
-      engine.on('ready', () => callbacks.current.onReady?.()),
-      engine.on('viewportChange', (v) =>
-        callbacks.current.onViewportChange?.(v),
-      ),
-      engine.on('dataChange', (d) => callbacks.current.onDataChange?.(d)),
-      engine.on('hover', (hit) => callbacks.current.onHover?.(hit)),
-      engine.on('click', (e) => callbacks.current.onClick?.(e)),
-      engine.on('selectionChange', (s) =>
-        callbacks.current.onSelectionChange?.(s.ids),
-      ),
+      engine.on('ready', () => cb.current.onReady?.()),
+      engine.on('firstFrame', () => cb.current.onFirstFrame?.()),
+      engine.on('viewportChange', (v) => cb.current.onViewportChange?.(v)),
+      engine.on('dataChange', (d) => cb.current.onDataChange?.(d)),
+      engine.on('hover', (hit) => cb.current.onHover?.(hit)),
+      engine.on('click', (e) => cb.current.onClick?.(e)),
+      engine.on('selectionChange', (s) => cb.current.onSelectionChange?.(s)),
     ];
-
-    const applySize = (cssW: number, cssH: number) =>
-      engine.resize(cssW, cssH, window.devicePixelRatio || 1);
-
-    const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      if (rect) applySize(rect.width, rect.height);
-    });
-    observer.observe(container);
-
-    const rect = container.getBoundingClientRect();
-    applySize(rect.width, rect.height);
-
-    if (dataRef.current) {
-      engine.setData(dataRef.current);
-      appliedData.current = dataRef.current;
-
-      // Restore the camera captured before the prior engine was disposed, so a
-      // theme/options edit keeps the current view instead of refitting (§12).
-      // `zoomToRange` reproduces originTime+pxPerMs exactly at the unchanged
-      // viewport width; `setScrollY` restores the vertical position. Runs after
-      // `setData` so it overrides that call's initial auto-fit. On first mount
-      // the snapshot is null, so the engine fits to data as before.
-      const prior = preservedViewport.current;
-      if (prior !== null) {
-        engine.zoomToRange(prior.timeRange[0], prior.timeRange[1]);
-        engine.setScrollY(prior.scrollY);
-      }
-    }
-
+    engine.mount(container);
+    const initialData = cb.current.data;
+    if (initialData) engine.setData(initialData);
+    appliedData.current = initialData;
+    engineRef.current = engine;
     return () => {
-      preservedViewport.current = engine.getViewport();
       for (const unsubscribe of off) unsubscribe();
-      observer.disconnect();
       engine.dispose();
       engineRef.current = null;
       appliedData.current = undefined;
     };
-  }, [
-    baseRef,
-    overlayRef,
-    containerRef,
-    theme,
-    options,
-    styleResolvers,
-    formatters,
-  ]);
+    // The engine lives as long as its container; everything else syncs below.
+  }, [containerRef]);
 
-  // Data sync: full setData whenever the `data` reference changes (§10, §12).
-  useEffect(() => {
+  // Option sync after every render: only changed fields reach the engine.
+  useIsomorphicLayoutEffect(() => {
+    const engine = engineRef.current;
+    if (engine === null) return;
+    const next = engineOptions();
+    const patch = changedFields(applied.current, next);
+    applied.current = next;
+    if (patch !== null) engine.setOptions(patch);
+  });
+
+  // Data sync: a full setData whenever the `data` reference changes (§10).
+  useIsomorphicLayoutEffect(() => {
     const engine = engineRef.current;
     if (engine === null || data === appliedData.current) return;
     if (data) engine.setData(data);

@@ -1,8 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { openFixture } from './fixturePage';
 
-// Phase 6 acceptance (DESIGN.md §15, §11): the demo themes and renders
-// data-driven colours/labels. We drive the three customisation toggles and read
-// the base canvas back: the theme toggle flips the background luminance, the
+// Theming (DESIGN.md §11): themes and data-driven
+// colours/labels render. We switch preset, resolvers and formatters through
+// the fixture page and read the base canvas back: the theme toggle flips the background luminance, the
 // "colours" toggle introduces a data-driven (green) line that the dark default
 // never draws, and every toggle re-renders without page/console errors. Exact
 // formatter text is asserted in the engine unit tests (canvas text is opaque to
@@ -48,8 +49,7 @@ test('theming + data-driven colours/labels render without errors (§11)', async 
     if (m.type() === 'error') errors.push(m.text());
   });
 
-  await page.goto('/?renderer=canvas2d');
-  await expect(page.getByTestId('timeline-root')).toBeVisible();
+  await openFixture(page);
 
   // First render: dark default theme → low average luminance, no reddish content.
   await expect
@@ -60,30 +60,28 @@ test('theming + data-driven colours/labels render without errors (§11)', async 
   const greenBefore = (await canvasStats(page))?.green ?? 0;
 
   // Light preset: the background flips, so average luminance jumps.
-  await page.getByRole('button', { name: 'Light' }).click();
+  await page.evaluate(() => window.__e2e!.setPreset('Light'));
   await expect
     .poll(async () => (await canvasStats(page))?.avgLum ?? 0, { timeout: 5000 })
     .toBeGreaterThan(180);
 
   // Back to dark for a clean data-driven-colour comparison.
-  await page.getByRole('button', { name: 'Dark' }).click();
+  await page.evaluate(() => window.__e2e!.setPreset('Dark'));
   await expect
     .poll(async () => (await canvasStats(page))?.avgLum ?? 999, {
       timeout: 5000,
     })
     .toBeLessThan(60);
 
-  // Open the data-hooks section, then turn colours on → a resolver paints at
-  // least one line a palette green.
-  await page.getByText('Data hooks').click();
-  await page.getByRole('switch', { name: 'Data-driven colours' }).click();
+  // Colours on → a resolver paints at least one line a palette green.
+  await page.evaluate(() => window.__e2e!.setDataHooks({ colours: true }));
   await expect
     .poll(async () => (await canvasStats(page))?.green ?? 0, { timeout: 5000 })
     .toBeGreaterThan(greenBefore);
 
   // Formatters on → re-renders (labels upper-cased / events prefixed); the
   // canvas must stay non-blank. Exact text is covered by the unit tests.
-  await page.getByRole('switch', { name: 'Uppercase labels' }).click();
+  await page.evaluate(() => window.__e2e!.setDataHooks({ labels: true }));
   await expect
     .poll(async () => (await canvasStats(page))?.avgLum ?? 0, { timeout: 5000 })
     .toBeGreaterThan(0);
@@ -104,7 +102,12 @@ async function canvasHash(
     }
     const ctx = canvas.getContext('2d');
     if (ctx === null) return null;
-    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let data: Uint8ClampedArray;
+    try {
+      ({ data } = ctx.getImageData(0, 0, canvas.width, canvas.height));
+    } catch {
+      return null; // WebKit briefly refuses reads under load
+    }
     let hash = 0;
     // Sample every 64th byte: cheap, but sensitive to dashes/separators changing
     // which pixels are painted.
@@ -112,6 +115,24 @@ async function canvasHash(
       hash = (hash + (data[i] ?? 0)) | 0;
     return hash;
   });
+}
+
+/**
+ * The canvas hash once it stops changing: late font and icon loads repaint
+ * the canvas after the first frame (WebKit is slowest), so a hash taken too
+ * early would never be seen again.
+ */
+async function settledHash(
+  page: import('@playwright/test').Page,
+): Promise<number | null> {
+  let previous = await canvasHash(page);
+  for (let i = 0; i < 20; i++) {
+    await page.waitForTimeout(150);
+    const next = await canvasHash(page);
+    if (next === previous) return next;
+    previous = next;
+  }
+  return previous;
 }
 
 test('row separators change the painted pixels and revert cleanly (§11)', async ({
@@ -123,28 +144,30 @@ test('row separators change the painted pixels and revert cleanly (§11)', async
     if (m.type() === 'error') errors.push(m.text());
   });
 
-  await page.goto('/?renderer=canvas2d');
-  await expect(page.getByTestId('timeline-root')).toBeVisible();
+  await openFixture(page);
   await expect
     .poll(async () => (await canvasStats(page))?.avgLum ?? 999, {
       timeout: 5000,
     })
     .toBeLessThan(60);
 
-  const before = await canvasHash(page);
+  const before = await settledHash(page);
   expect(before).not.toBeNull();
 
   // Row separators draw a line at every row boundary across the full width, so
   // enabling them changes which pixels are painted and the canvas hash shifts.
-  await page.getByText('Rows & layout').click();
-  const separators = page.getByRole('switch', { name: 'Row separators' });
-  await separators.click();
+  const separators = (enabled: boolean) =>
+    page.evaluate(
+      (on) => window.__e2e!.patchTheme({ rowSeparator: { enabled: on } }),
+      enabled,
+    );
+  await separators(true);
   await expect
     .poll(async () => await canvasHash(page), { timeout: 5000 })
     .not.toBe(before);
 
   // Disabling them restores the original render exactly.
-  await separators.click();
+  await separators(false);
   await expect
     .poll(async () => await canvasHash(page), { timeout: 5000 })
     .toBe(before);

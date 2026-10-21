@@ -13,63 +13,85 @@ import {
   VERSION,
   type Formatters,
   type HitResult,
-  type RendererBackend,
+  type Selection,
+  type SelectionInput,
   type StyleResolvers,
-  type Theme,
+  type ThemeInput,
   type Time,
   type TimelineData,
   type TimelineElement,
+  type TimelineEngine,
   type TimelineEvent,
   type TimelineEventMap,
+  type ViewportState,
 } from '@event-timeline/core';
 import { useTimeline, type TimelineOptions } from './useTimeline';
-import { Tooltip } from './Tooltip';
+import { placeTooltip, Tooltip } from './Tooltip';
 
 /**
- * Props for the {@link Timeline} component (Phase 1 subset, DESIGN.md §12).
- * `data`, `theme`, and `options` should be memoized by the host: they are
- * diffed by reference and re-applied only when the reference changes.
+ * Props for the {@link Timeline} component (DESIGN.md §12). `options`,
+ * `theme`, `styleResolvers` and `formatters` may be passed inline: they are
+ * compared field by field and only real changes reach the engine. Functions
+ * inside them are compared by reference, so a new function redraws.
  */
 export interface TimelineProps<TData = unknown> {
   data?: TimelineData<TData>;
-  theme?: Partial<Theme>;
-  options?: TimelineOptions;
-  /** Data-driven per-item style overrides (DESIGN.md §11, §12); memoize. */
+  theme?: ThemeInput;
+  options?: TimelineOptions<TData>;
+  /** Data-driven per-item style overrides (DESIGN.md §11). */
   styleResolvers?: StyleResolvers<TData>;
-  /** Label/tick text formatters (DESIGN.md §11, §12); memoize. */
+  /** Label/tick text formatters (DESIGN.md §11). */
   formatters?: Formatters<TData>;
-  /** Optional host renderer for tooltip content; defaults to label-only text. */
+  /** Show the hover tooltip. Default true. */
+  tooltip?: boolean;
+  /**
+   * Custom tooltip content; return `null` to show no tooltip for a hit. The
+   * default shows the formatted label (and a member list for clusters).
+   */
   renderTooltip?: (hit: HitResult<TData>) => ReactNode;
   /** Class applied to the root container. */
   className?: string;
   /** Inline style merged over the default container style. */
   style?: CSSProperties;
   onReady?: () => void;
+  /** The first frame was drawn. */
+  onFirstFrame?: () => void;
   onViewportChange?: (v: TimelineEventMap<TData>['viewportChange']) => void;
   onDataChange?: (d: TimelineEventMap<TData>['dataChange']) => void;
   onHover?: (hit: HitResult<TData> | null) => void;
   onClick?: (e: TimelineEventMap<TData>['click']) => void;
-  onSelectionChange?: (ids: string[]) => void;
+  onSelectionChange?: (selection: Selection) => void;
 }
 
 /** Imperative handle returned via `ref` (DESIGN.md §12). */
 export interface TimelineHandle<TData = unknown> {
   readonly version: string;
+  /** The underlying engine, or null before mount / after unmount. */
+  readonly engine: TimelineEngine<TData> | null;
   fit(): void;
   panToTime(t: Time): void;
   zoomToRange(start: Time, end: Time): void;
+  zoomIn(factor?: number): void;
+  zoomOut(factor?: number): void;
   setScrollY(scrollY: number): void;
-  select(ids: string[]): void;
-  getViewport(): TimelineEventMap<TData>['viewportChange'];
-  /** Which rendering backend the engine selected (DESIGN.md §4). */
-  getRendererBackend(): RendererBackend;
-  resize(cssW: number, cssH: number, dpr: number): void;
+  scrollToElement(id: string): void;
+  revealEvent(id: string): void;
+  select(selection: SelectionInput): void;
+  getSelection(): Selection;
+  clearSelection(): void;
+  /** The visible window, or null while no engine exists. */
+  getViewport(): ViewportState | null;
+  /** The base layer's backend, or null while no engine exists. */
+  getRendererBackend(): string | null;
   setData(data: TimelineData<TData>): void;
-  // Streaming methods (DESIGN.md §10): incremental updates that bypass the
-  // prop-driven full `setData`, for high-frequency hosts.
+  /** A snapshot of the engine's dataset (null while no engine exists). */
+  getData(): TimelineData<TData> | null;
+  // Streaming (DESIGN.md §10): incremental updates that bypass `data`.
   addEvents(events: readonly TimelineEvent<TData>[]): void;
   removeEvents(ids: readonly string[]): void;
+  updateEvent(id: string, patch: Partial<TimelineEvent<TData>>): void;
   addElements(elements: readonly TimelineElement<TData>[]): void;
+  removeElements(ids: readonly string[]): void;
   updateElement(id: string, patch: Partial<TimelineElement<TData>>): void;
 }
 
@@ -80,20 +102,7 @@ const containerStyle: CSSProperties = {
   overflow: 'hidden',
 };
 
-const canvasStyle: CSSProperties = {
-  position: 'absolute',
-  inset: 0,
-  width: '100%',
-  height: '100%',
-  display: 'block',
-};
-
-const EMPTY_VIEWPORT: TimelineEventMap['viewportChange'] = {
-  timeRange: [0, 0],
-  scrollY: 0,
-  pxPerMs: 0,
-  visibleRowRange: [0, 0],
-};
+const EMPTY_SELECTION: Selection = { elements: [], events: [] };
 
 function TimelineInner<TData>(
   props: TimelineProps<TData>,
@@ -102,18 +111,13 @@ function TimelineInner<TData>(
   const { className, style, data, theme, options, styleResolvers, formatters } =
     props;
   const containerRef = useRef<HTMLDivElement>(null);
-  const baseRef = useRef<HTMLCanvasElement>(null);
-  const overlayRef = useRef<HTMLCanvasElement>(null);
-
-  // Hover hit (from the engine) and the pointer position (from the DOM) drive
-  // the HTML tooltip. Tracking position in React keeps canvas hit-testing in
-  // the engine while text rendering stays crisp HTML (§9).
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+  // The pointer position lives in a ref: moving the pointer only moves the
+  // tooltip element, it never re-renders the component.
+  const pointer = useRef({ x: 0, y: 0 });
   const [hover, setHover] = useState<HitResult<TData> | null>(null);
-  const [pointer, setPointer] = useState({ x: 0, y: 0 });
 
   const engineRef = useTimeline<TData>({
-    baseRef,
-    overlayRef,
     containerRef,
     data,
     theme,
@@ -121,6 +125,7 @@ function TimelineInner<TData>(
     styleResolvers,
     formatters,
     onReady: props.onReady,
+    onFirstFrame: props.onFirstFrame,
     onViewportChange: props.onViewportChange,
     onDataChange: props.onDataChange,
     onHover: (hit) => {
@@ -135,26 +140,40 @@ function TimelineInner<TData>(
     ref,
     (): TimelineHandle<TData> => ({
       version: VERSION,
+      get engine() {
+        return engineRef.current;
+      },
       fit: () => engineRef.current?.fit(),
       panToTime: (t) => engineRef.current?.panToTime(t),
       zoomToRange: (s, e) => engineRef.current?.zoomToRange(s, e),
+      zoomIn: (factor) => engineRef.current?.zoomIn(factor),
+      zoomOut: (factor) => engineRef.current?.zoomOut(factor),
       setScrollY: (y) => engineRef.current?.setScrollY(y),
-      select: (ids) => engineRef.current?.select(ids),
-      getViewport: () => engineRef.current?.getViewport() ?? EMPTY_VIEWPORT,
-      getRendererBackend: () =>
-        engineRef.current?.getRendererBackend() ?? 'canvas2d',
-      resize: (w, h, dpr) => engineRef.current?.resize(w, h, dpr),
+      scrollToElement: (id) => engineRef.current?.scrollToElement(id),
+      revealEvent: (id) => engineRef.current?.revealEvent(id),
+      select: (selection) => engineRef.current?.select(selection),
+      getSelection: () => engineRef.current?.getSelection() ?? EMPTY_SELECTION,
+      clearSelection: () => engineRef.current?.clearSelection(),
+      getViewport: () => engineRef.current?.getViewport() ?? null,
+      getRendererBackend: () => engineRef.current?.getRendererBackend() ?? null,
       setData: (d) => engineRef.current?.setData(d),
+      getData: () => engineRef.current?.getData() ?? null,
       addEvents: (e) => engineRef.current?.addEvents(e),
       removeEvents: (ids) => engineRef.current?.removeEvents(ids),
+      updateEvent: (id, patch) => engineRef.current?.updateEvent(id, patch),
       addElements: (el) => engineRef.current?.addElements(el),
+      removeElements: (ids) => engineRef.current?.removeElements(ids),
       updateElement: (id, patch) => engineRef.current?.updateElement(id, patch),
     }),
     [engineRef],
   );
 
-  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) =>
-    setPointer({ x: e.clientX, y: e.clientY });
+  const onPointerMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    pointer.current = { x: e.clientX, y: e.clientY };
+    if (tooltipRef.current !== null) {
+      placeTooltip(tooltipRef.current, e.clientX, e.clientY);
+    }
+  };
 
   return (
     <div
@@ -164,32 +183,24 @@ function TimelineInner<TData>(
       data-testid="timeline-root"
       onPointerMove={onPointerMove}
     >
-      {/* Keyed on the renderer preference: a canvas is permanently bound to
-          its first context type, so switching backends needs fresh elements.
-          Refs re-attach before the engine lifecycle effect re-runs (§12). */}
-      <canvas
-        key={`base-${options?.renderer ?? 'auto'}`}
-        ref={baseRef}
-        style={canvasStyle}
-      />
-      <canvas
-        key={`overlay-${options?.renderer ?? 'auto'}`}
-        ref={overlayRef}
-        style={canvasStyle}
-      />
-      <Tooltip
-        hit={hover}
-        x={pointer.x}
-        y={pointer.y}
-        render={props.renderTooltip}
-      />
+      {props.tooltip !== false ? (
+        <Tooltip
+          ref={tooltipRef}
+          hit={hover}
+          x={pointer.current.x}
+          y={pointer.current.y}
+          render={props.renderTooltip}
+          formatters={formatters}
+          theme={theme}
+        />
+      ) : null}
     </div>
   );
 }
 
 /**
- * Canvas timeline component. Owns the two stacked `<canvas>` layers and the
- * ResizeObserver, and drives the core engine imperatively (DESIGN.md §4, §12).
+ * Canvas timeline component. Mounts a core engine into its container and
+ * keeps it in sync with the props (DESIGN.md §4, §12).
  */
 export const Timeline = forwardRef(TimelineInner) as <TData = unknown>(
   props: TimelineProps<TData> & { ref?: Ref<TimelineHandle<TData>> },

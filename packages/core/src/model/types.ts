@@ -16,10 +16,15 @@ export type Time = number;
 /** An entity drawn as a horizontal line (lane). */
 export interface TimelineElement<TData = unknown> {
   id: string;
-  label: string;
-  /** URL, emoji, or preloaded image; drawn in the label area (Phase 2+). */
-  icon?: string | HTMLImageElement;
-  /** Per-element style overrides, merged over the theme (Phase 6). */
+  /** Shown at the line start; the id is shown when it is omitted. */
+  label?: string;
+  /**
+   * Drawn above the label at the line start: a URL (loaded and cached), any
+   * other string (an emoji or glyph, drawn as text), or an image source such
+   * as an `HTMLImageElement`, `ImageBitmap` or canvas.
+   */
+  icon?: string | CanvasImageSource;
+  /** Per-element style overrides, merged over the theme (§11). */
   style?: Partial<ElementStyle>;
   /** Ordering hint honoured only by the `explicit` layout strategy (§7). */
   order?: number;
@@ -36,15 +41,24 @@ export interface TimelineEvent<TData = unknown> {
   targetId: string;
   /** The moment the event occurs. */
   time: Time;
+  /**
+   * Reserved for events with a duration (the end of the interval), so adding
+   * them later is not a breaking change. Validated — it must be a finite time
+   * no earlier than `time`, else it is reported — but not drawn yet.
+   */
+  endTime?: Time;
   label?: string;
   style?: Partial<EventStyle>;
   data?: TData;
 }
 
-/** A clean dataset handed to the engine to render. */
+/**
+ * A dataset handed to the engine. The engine copies what it indexes and
+ * never writes to the arrays, so they may be frozen or shared.
+ */
 export interface TimelineData<TData = unknown> {
-  elements: TimelineElement<TData>[];
-  events: TimelineEvent<TData>[];
+  elements: readonly TimelineElement<TData>[];
+  events: readonly TimelineEvent<TData>[];
 }
 
 /**
@@ -114,47 +128,72 @@ export interface EventStyle {
   labelBoxPadding: number;
 }
 
-/** Engine-wide theme: defaults plus structural metrics (DESIGN.md §11). */
+/** Vertical time gridlines. */
+export interface GridStyle {
+  color: string;
+  /** Stroke width, CSS px. */
+  width: number;
+  /** `[]` = solid. */
+  dash: LineDash;
+}
+
+/** The time header above the rows. */
+export interface HeaderStyle {
+  /** Height of the two-row header, CSS px. */
+  height: number;
+  textColor: string;
+  /** CSS font shorthand sized in px. */
+  font: string;
+  /** Vertical centre of the major (upper) labels, as a fraction of the height. */
+  majorTickRatio: number;
+  /** Vertical centre of the minor (lower) labels, as a fraction of the height. */
+  minorTickRatio: number;
+}
+
+/** Row geometry and the spacing around lines, markers and labels, CSS px. */
+export interface LayoutStyle {
+  rowHeight: number;
+  /** Space between rows. */
+  rowGap: number;
+  /** Space kept between the viewport's left edge and a sticky start marker. */
+  edgePadding: number;
+  /** Length of line drawn before an element's first event. */
+  lineLead: number;
+  /** Gap between a start marker (icon/label) and its line's left end. */
+  markerGap: number;
+  /** Gap between a riser or cluster marker and its label. */
+  eventLabelGap: number;
+}
+
+/** Hover and selection highlights on the overlay layer (DESIGN.md §9). */
+export interface EmphasisStyle {
+  hoverColor: string;
+  selectionColor: string;
+  /** Stroke width added to a hovered primitive, CSS px. */
+  hoverWidthBonus: number;
+  /** Stroke width added to a selected primitive, CSS px. */
+  selectionWidthBonus: number;
+  /** Radius added to a highlighted node dot or arrowhead, CSS px. */
+  radiusBonus: number;
+}
+
+/** Collapsed-event cluster markers (DESIGN.md §6). */
+export interface ClusterStyle {
+  color: string;
+  /** Colour of the "×N" count label. */
+  textColor: string;
+  /** Radius a marker gets over an ordinary node dot, CSS px. */
+  markerBonus: number;
+}
+
+/** Engine-wide theme: colours, metrics and the style defaults (DESIGN.md §11). */
 export interface Theme {
   background: string;
-  gridlineColor: string;
-  /** Gridline stroke width in CSS px. */
-  gridlineWidth: number;
-  /** Gridline dash; `[]` = solid. */
-  gridlineDash: LineDash;
-  headerTextColor: string;
-  headerFont: string;
-  /** Height of the (multi-row) time header in CSS px. */
-  headerHeight: number;
-  /** Vertical centre of the major tick label, as a fraction of `headerHeight`. */
-  headerMajorTickRatio: number;
-  /** Vertical centre of the minor tick label, as a fraction of `headerHeight`. */
-  headerMinorTickRatio: number;
-  rowHeight: number;
-  rowGap: number;
-  labelPadding: number;
-  /** Horizontal lead drawn before an element's first event, in CSS px. */
-  lineLeadPadding: number;
-  /** Gap between the start marker block and the line's left end, in CSS px. */
-  markerGap: number;
-  /** Gap between a riser/marker and its event label, in CSS px. */
-  eventLabelGap: number;
-  /** Overlay colour for the hovered primitive (DESIGN.md §9). */
-  hoverColor: string;
-  /** Overlay colour for selected primitives' outlines (DESIGN.md §9). */
-  selectionColor: string;
-  /** Extra stroke width added to a hovered primitive in the overlay, in CSS px. */
-  hoverWidthBonus: number;
-  /** Extra stroke width added to a selected primitive in the overlay, in CSS px. */
-  selectionWidthBonus: number;
-  /** Extra radius added to a hovered/selected node dot & arrowhead, in CSS px. */
-  emphasisRadiusBonus: number;
-  /** Colour of collapsed-event cluster markers (DESIGN.md §6). */
-  clusterColor: string;
-  /** Colour of the cluster "×N" count label (defaults to `clusterColor`). */
-  clusterTextColor: string;
-  /** Extra radius a cluster marker gets over an ordinary node dot, in CSS px. */
-  clusterMarkerBonus: number;
+  grid: GridStyle;
+  header: HeaderStyle;
+  layout: LayoutStyle;
+  emphasis: EmphasisStyle;
+  cluster: ClusterStyle;
   /** Separator lines drawn between rows (off by default). */
   rowSeparator: RowSeparatorStyle;
   /** Theme-level element defaults (base of the resolution chain). */
@@ -162,3 +201,13 @@ export interface Theme {
   /** Theme-level event defaults (base of the resolution chain). */
   event: EventStyle;
 }
+
+/**
+ * A theme override (DESIGN.md §11): every key optional, and each group
+ * partial too — it is merged over the defaults group by group, so
+ * `{ header: { height: 56 } }` changes only the header height. Dash arrays
+ * are replaced whole.
+ */
+export type ThemeInput = {
+  [K in keyof Theme]?: Theme[K] extends object ? Partial<Theme[K]> : Theme[K];
+};

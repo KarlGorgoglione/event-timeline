@@ -23,14 +23,16 @@ export default defineConfig({
       ),
     },
   },
-  // Emit both HTML entries on `vite build`: the React demo and the headless perf
-  // harness (§13). Perf benchmarks run against this *production* preview build,
-  // not the dev server, so frame times reflect minified/optimised code.
+  // Emit every HTML entry on `vite build`: the React demo, the headless perf
+  // harness (§13) and the e2e fixture page (§14). Perf benchmarks run against
+  // this *production* preview build, not the dev server, so frame times
+  // reflect minified/optimised code.
   build: {
     rollupOptions: {
       input: {
         index: fileURLToPath(new URL('index.html', import.meta.url)),
         bench: fileURLToPath(new URL('bench.html', import.meta.url)),
+        e2e: fileURLToPath(new URL('e2e.html', import.meta.url)),
       },
     },
   },

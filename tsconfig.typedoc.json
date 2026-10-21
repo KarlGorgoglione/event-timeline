@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "paths": {
+      "@event-timeline/core": ["./packages/core/src/index.ts"]
+    }
+  },
+  "include": ["packages/core/src", "packages/react/src"],
+  "exclude": ["**/*.test.ts", "**/*.test.tsx", "packages/core/src/testing"]
+}

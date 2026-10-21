@@ -4,11 +4,9 @@ import type {
   TimelineEvent,
 } from '@event-timeline/react';
 
-// A deterministic synthetic dataset for exercising culling and clustering at
-// scale (DESIGN.md §15: Phase 2 culls 10k events; Phase 4 collapses 50k into
-// clusters at zoom-out). A seeded PRNG keeps it reproducible across runs so the
-// demo and the Playwright tests see the same data; pass a larger `eventCount`
-// (e.g. 50_000) for the indexed-phase acceptance run.
+// A deterministic synthetic dataset for exercising culling, clustering and
+// aggregation at scale (§5, §6). A seeded PRNG keeps it reproducible, so the
+// demo, the Playwright tests and the perf harness see the same data.
 
 /** Mulberry32 — a tiny, fast, deterministic 32-bit PRNG. */
 function mulberry32(seed: number): () => number {
@@ -95,7 +93,7 @@ export function makeSynthetic(
 }
 
 /**
- * A batch of events for the Phase 7 streaming demo (DESIGN.md §10). Events
+ * A batch of events for the streaming demo (DESIGN.md §10). Events
  * reference *existing* elements (so none drop as dangling edges) and land at
  * random times across `[tStart, tEnd]` — the current visible window — so each
  * batch appears immediately wherever the user has panned/zoomed. `startIndex`

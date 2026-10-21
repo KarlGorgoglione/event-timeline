@@ -57,7 +57,7 @@ export function useDemoConfig(): DemoConfigApi {
     const cached = cache.current.get(key);
     if (cached) return cached as (value: T) => void;
     const setter = (value: T) => dispatch({ type: 'update', path, value });
-    cache.current.set(key, setter as (value: never) => void);
+    cache.current.set(key, setter);
     return setter;
   }
 

@@ -1,14 +1,16 @@
 # @event-timeline/core
 
-Framework-agnostic Canvas timeline engine — pure TypeScript, **zero React**, no
-DOM-framework assumptions. It renders **elements** (horizontal lanes) and
-**events** (directed arrows between lanes at a point in time) on a `<canvas>` and
-stays smooth while panning/zooming large datasets.
+A framework-free timeline engine in TypeScript, with **no runtime
+dependencies**. It renders **elements** (horizontal lanes) and **events**
+(directed arrows between lanes at a point in time) and holds 60 fps at 50,000
+events: on an instanced WebGL2 renderer where the GPU is available, on Canvas2D
+otherwise.
 
-This is the engine behind [`@event-timeline/react`](https://www.npmjs.com/package/@event-timeline/react).
-Use it directly to embed the timeline in any framework (or none). See
-[`docs/DESIGN.md`](https://github.com/KarlGorgoglione/event-timeline/blob/main/docs/DESIGN.md)
-for the architecture.
+This is the engine behind
+[`@event-timeline/react`](https://www.npmjs.com/package/@event-timeline/react);
+use it directly from any framework, or none. Architecture:
+[`docs/DESIGN.md`](https://github.com/KarlGorgoglione/event-timeline/blob/main/docs/DESIGN.md).
+API reference: <https://karlgorgoglione.github.io/event-timeline/api/>.
 
 ## Install
 
@@ -16,30 +18,23 @@ for the architecture.
 pnpm add @event-timeline/core
 ```
 
-The only runtime dependency is [`date-fns`](https://date-fns.org/) (imported
-per-function to stay tree-shakeable). Calendar math runs in **UTC** so ticks are
-machine-stable.
-
 ## Quick start
-
-The engine is handed two stacked canvases — a **base** layer (lines, arrows,
-header) and an **overlay** layer (hover/selection) — and is driven imperatively.
-It attaches **no** `ResizeObserver`; the host calls `resize()` on size changes.
 
 ```ts
 import { TimelineEngine } from '@event-timeline/core';
 
-const engine = new TimelineEngine(baseCanvas, overlayCanvas, {
+const engine = new TimelineEngine<MyData>({
   multiSelect: true,
-  // onDiagnostic, layout, clustering, lod, styleResolvers, formatters, onFrameStats…
+  onDiagnostic: (d) => console.warn(d.code, d.reason),
 });
 
-engine.resize(container.clientWidth, container.clientHeight, devicePixelRatio);
-engine.setData({ elements, events });
-engine.fit();
+// The engine creates its canvases inside `container` and follows its size and
+// device pixel ratio (pass { autoResize: false } to call resize() yourself).
+engine.mount(container);
+engine.setData({ elements, events }); // framed automatically the first time
 
 const off = engine.on('hover', (hit) => {
-  /* hit is a typed discriminated union: element | event | cluster | null */
+  // hit: { kind: 'element' | 'event' | 'cluster', … } | null
 });
 
 // later
@@ -47,29 +42,32 @@ off();
 engine.dispose();
 ```
 
-The engine consumes the overlay canvas's pointer/wheel events itself (pan, zoom
-about the cursor, hover, click/selection). Pan is anchored in the **time
-domain**, and all time↔screen math lives in a single Camera/scale module
-(the §3 "single source of coordinate truth").
+Calendar math is done in **UTC** with native `Date`, so ticks are identical on
+every machine; header labels are formatted with `Intl` in the `locale` option.
 
 ## Highlights
 
-- **Virtualised & culled** rendering over a sorted temporal index (binary-search
-  range queries) plus per-element buckets — built for ~50k events.
-- **Clustering & LOD** (§6): dense events collapse into themeable "×N" markers
-  that expand on zoom; per-event labels gate on a zoom threshold.
-- **Pluggable layout** (§7): `byFirstEvent` (default), `barycenter`
-  crossing-reduction, and `explicit` ordering — pure `order()` strategies.
-- **Theming & resolution chain** (§11): per-item `style` → resolver → theme
-  default, plus label/tick formatters.
-- **Live/streaming** (§10): `addEvents` / `removeEvents` / `addElements` /
-  `updateElement` update indexes incrementally (stable-append layout).
-- **Swappable renderer seam** (§4): `Renderer` exposes only backend-free draw
-  verbs in device pixels (a WebGL backend can replace Canvas2D unchanged).
-- **Lenient validation** (§1): invalid items are dropped and reported through an
-  injectable `onDiagnostic` sink — never thrown.
-- **Observable frames** (§13): an optional `onFrameStats` sink reports per-layer
-  draw time for benchmarking, with zero overhead when omitted.
+- **Renderers**: `renderer: 'auto'` (default) uses instanced WebGL2 when it is
+  hardware-accelerated and Canvas2D otherwise; a failure at any step falls back
+  to Canvas2D on a fresh canvas, and a lost GL context that doesn't come back
+  falls back too. Draw errors become `render-error` diagnostics.
+- **Scale**: events in sorted typed columns, binary-search culling, a
+  row-interval index for tall views, allocation-free frames, and precomputed
+  per-pair time bins when zoomed far out (`clustering.maxMarkers`).
+- **Clustering and LOD**: dense events collapse into "×N" markers that expand
+  on zoom or click; labels are placed without collisions and capped per frame.
+- **Layout**: `byFirstEvent` (default), `barycenter` and `explicit`, or your
+  own `LayoutStrategy`.
+- **Theming**: a grouped `Theme` (override any part with a `ThemeInput`),
+  per-item styles and resolvers, label and tick formatters, all changeable at
+  runtime (`setTheme`, `setOptions`, `setStyleResolvers`, `setFormatters`).
+- **Live data**: `addEvents`, `removeEvents`, `updateEvent`, `addElements`,
+  `updateElement`, `removeElements`, with stable rows while streaming.
+- **Input**: drag, wheel, pinch and keyboard navigation; hover, click and
+  structured selection (`{ elements, events }`).
+- **Lenient validation**: invalid items are dropped and reported to
+  `onDiagnostic`, never thrown.
+- **Testable**: the renderer, frame scheduler and clock are injectable.
 
 ## License
 

@@ -1,19 +1,20 @@
 // Canvas2D implementation of the Renderer seam (DESIGN.md §3 DPR, §4).
 //
-// This is the only file in the engine allowed to touch a 2D context, and it is
-// not re-exported as a type, so the engine never imports CanvasRenderingContext2D.
+// One instance draws one canvas layer. It is the only renderer allowed to touch
+// a 2D context for drawing, and it is not re-exported as a type, so the engine
+// never imports CanvasRenderingContext2D.
 //
 // DPR convention (§3): resize sets the backing store to device pixels and does
 // NOT call ctx.scale; all incoming batch coordinates are already in device
-// pixels. Drawing batches by style minimises context state changes (§4).
+// pixels. Each batch is one path or one fill, minimising state changes (§4).
 
 import { arrowheadTriangle } from './arrowGeometry';
 import type {
   ArrowheadBatch,
   ImageBatch,
-  Layer,
   LineBatch,
   NodeBatch,
+  RectBatch,
   Renderer,
   TextBatch,
   TextMetricsLite,
@@ -21,46 +22,30 @@ import type {
 
 export class Canvas2DRenderer implements Renderer {
   readonly backend = 'canvas2d' as const;
-  private readonly baseCtx: CanvasRenderingContext2D;
-  private readonly overlayCtx: CanvasRenderingContext2D;
-  private current: CanvasRenderingContext2D;
+  private readonly ctx: CanvasRenderingContext2D;
 
-  constructor(
-    private readonly baseCanvas: HTMLCanvasElement,
-    private readonly overlayCanvas: HTMLCanvasElement,
-    private readonly background: string,
-  ) {
-    this.baseCtx = getContext(baseCanvas);
-    this.overlayCtx = getContext(overlayCanvas);
-    this.current = this.baseCtx;
+  /** Throws when the canvas yields no 2D context (use {@link tryCanvas2D}). */
+  constructor(private readonly canvas: HTMLCanvasElement) {
+    const ctx = canvas.getContext('2d');
+    if (ctx === null) {
+      throw new Error('Canvas2DRenderer: failed to acquire a 2D context');
+    }
+    this.ctx = ctx;
   }
 
   resize(deviceWidth: number, deviceHeight: number): void {
     // Setting width/height resizes the backing store and clears it.
-    this.baseCanvas.width = deviceWidth;
-    this.baseCanvas.height = deviceHeight;
-    this.overlayCanvas.width = deviceWidth;
-    this.overlayCanvas.height = deviceHeight;
+    this.canvas.width = deviceWidth;
+    this.canvas.height = deviceHeight;
   }
 
-  beginFrame(layer: Layer): void {
-    if (layer === 'base') {
-      this.current = this.baseCtx;
-      this.baseCtx.fillStyle = this.background;
-      this.baseCtx.fillRect(
-        0,
-        0,
-        this.baseCanvas.width,
-        this.baseCanvas.height,
-      );
-    } else {
-      this.current = this.overlayCtx;
-      this.overlayCtx.clearRect(
-        0,
-        0,
-        this.overlayCanvas.width,
-        this.overlayCanvas.height,
-      );
+  beginFrame(clearColor: string | null): void {
+    const { ctx, canvas } = this;
+    // Clear first so a translucent background doesn't accumulate.
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if (clearColor !== null) {
+      ctx.fillStyle = clearColor;
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
   }
 
@@ -71,23 +56,45 @@ export class Canvas2DRenderer implements Renderer {
     height: number,
     color: string,
   ): void {
-    const ctx = this.current;
-    ctx.fillStyle = color;
-    ctx.fillRect(x, y, width, height);
+    this.ctx.fillStyle = color;
+    this.ctx.fillRect(x, y, width, height);
+  }
+
+  drawRects(batch: RectBatch): void {
+    if (batch.count === 0) return;
+    const { ctx } = this;
+    const c = batch.coords;
+    ctx.fillStyle = batch.color;
+    ctx.beginPath();
+    for (let i = 0; i < batch.count * 4; i += 4) {
+      ctx.rect(
+        c[i] as number,
+        c[i + 1] as number,
+        c[i + 2] as number,
+        c[i + 3] as number,
+      );
+    }
+    ctx.fill();
   }
 
   drawLines(batch: LineBatch): void {
-    if (batch.segments.length === 0) return;
-    const ctx = this.current;
+    if (batch.count === 0) return;
+    const { ctx } = this;
+    const c = batch.coords;
+    const joins = batch.joins;
     ctx.strokeStyle = batch.color;
     ctx.lineWidth = batch.width;
-    const dash = batch.dash;
-    const dashed = dash !== undefined && dash.length > 0;
-    if (dashed) ctx.setLineDash(dash);
+    const dashed = batch.dash !== undefined && batch.dash.length > 0;
+    if (dashed) ctx.setLineDash(batch.dash as number[]);
     ctx.beginPath();
-    for (const s of batch.segments) {
-      ctx.moveTo(s.x1, s.y1);
-      ctx.lineTo(s.x2, s.y2);
+    for (let s = 0; s < batch.count; s++) {
+      const i = s * 4;
+      // A joined segment continues the previous one: one subpath, so the
+      // stroke gets a proper join instead of two butt caps (no notches).
+      if (joins === undefined || joins[s] !== 1) {
+        ctx.moveTo(c[i] as number, c[i + 1] as number);
+      }
+      ctx.lineTo(c[i + 2] as number, c[i + 3] as number);
     }
     ctx.stroke();
     // Reset so a dashed batch never bleeds into the next solid one (§4).
@@ -95,75 +102,99 @@ export class Canvas2DRenderer implements Renderer {
   }
 
   drawText(batch: TextBatch): void {
-    if (batch.items.length === 0) return;
-    const ctx = this.current;
+    if (batch.count === 0) return;
+    const { ctx } = this;
     ctx.fillStyle = batch.color;
     ctx.font = batch.font;
     ctx.textBaseline = batch.baseline;
     ctx.textAlign = batch.align;
-    for (const item of batch.items) {
-      ctx.fillText(item.text, item.x, item.y);
+    for (let i = 0; i < batch.count; i++) {
+      ctx.fillText(
+        batch.texts[i] as string,
+        batch.xs[i] as number,
+        batch.ys[i] as number,
+      );
     }
   }
 
   measureText(text: string, font: string): TextMetricsLite {
-    this.baseCtx.font = font;
-    return { width: this.baseCtx.measureText(text).width };
+    this.ctx.font = font;
+    return { width: this.ctx.measureText(text).width };
   }
 
   drawArrowheads(batch: ArrowheadBatch): void {
-    if (batch.items.length === 0) return;
-    const ctx = this.current;
-    const { size } = batch;
+    if (batch.count === 0) return;
+    const { ctx } = this;
+    const c = batch.coords;
     ctx.fillStyle = batch.color;
-    // One path for the whole batch; triangle vertices come from the shared
-    // backend geometry so Canvas2D and WebGL cannot drift (§4).
+    // One path for the batch; triangle vertices come from the geometry shared
+    // with the WebGL backend so the two cannot drift (§4). No closePath: fill()
+    // closes each subpath itself, and closePath per triangle is very costly.
     ctx.beginPath();
-    for (const { x, y, angle } of batch.items) {
-      const v = arrowheadTriangle(x, y, angle, size);
+    for (let i = 0; i < batch.count * 3; i += 3) {
+      const v = arrowheadTriangle(
+        c[i] as number,
+        c[i + 1] as number,
+        c[i + 2] as number,
+        batch.size,
+      );
       ctx.moveTo(v.tipX, v.tipY);
       ctx.lineTo(v.baseAX, v.baseAY);
       ctx.lineTo(v.baseBX, v.baseBY);
-      ctx.closePath();
     }
     ctx.fill();
   }
 
   drawNodes(batch: NodeBatch): void {
-    if (batch.items.length === 0) return;
-    const ctx = this.current;
+    if (batch.count === 0) return;
+    const { ctx } = this;
+    const c = batch.coords;
+    const r = batch.radius;
     ctx.fillStyle = batch.color;
     ctx.beginPath();
-    for (const { x, y } of batch.items) {
+    for (let i = 0; i < batch.count * 2; i += 2) {
+      const x = c[i] as number;
+      const y = c[i + 1] as number;
       // moveTo before each arc so circles are not joined by a connecting line.
-      ctx.moveTo(x + batch.radius, y);
-      ctx.arc(x, y, batch.radius, 0, Math.PI * 2);
+      ctx.moveTo(x + r, y);
+      ctx.arc(x, y, r, 0, Math.PI * 2);
     }
     ctx.fill();
   }
 
   drawImages(batch: ImageBatch): void {
-    const ctx = this.current;
+    const { ctx } = this;
+    let failed = false;
+    let failure: unknown;
     for (const { x, y, size, image } of batch.items) {
       try {
         // The seam carries an opaque RendererImage; Canvas2D narrows it to a
         // CanvasImageSource (§4). Only this backend knows the concrete type.
         ctx.drawImage(image as CanvasImageSource, x, y, size, size);
-      } catch {
-        // An image that failed to decode throws on draw; skip it this frame.
+      } catch (error) {
+        // A broken image throws on draw: skip it, draw the rest, then report
+        // the first failure (the guarded seam turns it into a diagnostic).
+        if (!failed) {
+          failed = true;
+          failure = error;
+        }
       }
     }
+    if (failed) throw failure;
   }
 
-  endFrame(_layer: Layer): void {
+  endFrame(): void {
     /* Canvas2D is immediate-mode; nothing to flush. */
   }
 }
 
-function getContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
-  const ctx = canvas.getContext('2d');
-  if (ctx === null) {
-    throw new Error('Canvas2DRenderer: failed to acquire a 2D context');
+/** A Canvas2D renderer for `canvas`, or null when no 2D context exists (jsdom). */
+export function tryCanvas2D(
+  canvas: HTMLCanvasElement,
+): Canvas2DRenderer | null {
+  try {
+    return new Canvas2DRenderer(canvas);
+  } catch {
+    return null;
   }
-  return ctx;
 }

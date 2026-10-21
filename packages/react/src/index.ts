@@ -1,19 +1,33 @@
 export { Timeline } from './Timeline';
 export type { TimelineProps, TimelineHandle } from './Timeline';
-export { Tooltip } from './Tooltip';
+export { Tooltip, defaultTooltipContent } from './Tooltip';
 export type { TooltipProps } from './Tooltip';
-export type { TimelineOptions } from './useTimeline';
+export { useTimeline } from './useTimeline';
+export type { TimelineOptions, UseTimelineArgs } from './useTimeline';
 
-// Re-export the core domain types hosts need to type their `data`/callbacks.
+// Core types hosts need to type their data, callbacks and customisation.
 export type {
   TimelineData,
   TimelineElement,
   TimelineEvent,
+  TimelineEngine,
+  TimelineEventMap,
   HitResult,
   Time,
+  Selection,
+  SelectionInput,
+  ViewportState,
+  DataChangeCounts,
+  Diagnostic,
+  DiagnosticCode,
   LayoutStrategy,
-  // Theming & customisation surface (DESIGN.md §11, §12).
   Theme,
+  ThemeInput,
+  GridStyle,
+  HeaderStyle,
+  LayoutStyle,
+  EmphasisStyle,
+  ClusterStyle,
   ElementStyle,
   EventStyle,
   LineDash,
@@ -24,24 +38,25 @@ export type {
   EventStyleResolver,
   EventLabelPlacement,
   TickFormatter,
+  TickLevel,
   FrameStats,
   ClusterStrategy,
+  ClusterContext,
+  ClusteringOptions,
+  LodOptions,
   RendererBackend,
   RendererPreference,
 } from '@event-timeline/core';
 
-// Built-in layout strategies (DESIGN.md §7), so hosts can name one in `options`.
-export { byFirstEvent, barycenter, explicit } from '@event-timeline/core';
-
-// Built-in cluster strategies (DESIGN.md §6), so hosts can name one in
-// `options.clustering.strategy` without depending on core directly.
+// Built-in strategies and the default theme, so hosts can name them in props
+// without importing core directly.
 export {
+  byFirstEvent,
+  barycenter,
+  explicit,
   byPixelColumn,
   byElementPair,
   byDay,
   bySourceTargetColumn,
+  defaultTheme,
 } from '@event-timeline/core';
-
-// The dark theme default (base of the §11 resolution chain), so hosts can read
-// or compose against it when building a `Partial<Theme>`.
-export { defaultTheme } from '@event-timeline/core';

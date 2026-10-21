@@ -27,9 +27,9 @@ const ev = (
 
 describe('cluster strategies (§6)', () => {
   it('byPixelColumn keys solely by binned screen column', () => {
-    expect(byPixelColumn.key(ev('a', 'b', 3), ctx)).toBe('0');
-    expect(byPixelColumn.key(ev('c', 'd', 9), ctx)).toBe('0'); // same 0..9 bin
-    expect(byPixelColumn.key(ev('a', 'b', 11), ctx)).toBe('1');
+    expect(byPixelColumn.key(ev('a', 'b', 3), ctx)).toBe(0);
+    expect(byPixelColumn.key(ev('c', 'd', 9), ctx)).toBe(0); // same 0..9 bin
+    expect(byPixelColumn.key(ev('a', 'b', 11), ctx)).toBe(1);
   });
 
   it('byElementPair keys by direction-aware endpoints, ignoring time', () => {
@@ -43,9 +43,9 @@ describe('cluster strategies (§6)', () => {
 
   it('byDay buckets UTC calendar days (machine-stable)', () => {
     const day = 86_400_000;
-    expect(byDay.key(ev('a', 'b', 0), ctx)).toBe('0');
-    expect(byDay.key(ev('a', 'b', day - 1), ctx)).toBe('0');
-    expect(byDay.key(ev('a', 'b', day), ctx)).toBe('1');
+    expect(byDay.key(ev('a', 'b', 0), ctx)).toBe(0);
+    expect(byDay.key(ev('a', 'b', day - 1), ctx)).toBe(0);
+    expect(byDay.key(ev('a', 'b', day), ctx)).toBe(1);
   });
 
   it('bySourceTargetColumn combines the pair and the column', () => {

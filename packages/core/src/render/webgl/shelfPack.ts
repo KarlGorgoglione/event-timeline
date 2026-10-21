@@ -1,4 +1,4 @@
-// Shelf packer for the text atlas (§4, §16).
+// Shelf packer for the text atlas (§4).
 //
 // Classic shelf packing: rows ("shelves") of fixed height are opened top to
 // bottom; entries are placed left to right on the first shelf whose height

@@ -1,78 +1,119 @@
-// WebGL2 implementation of the Renderer seam (DESIGN.md §4, §16).
+// WebGL2 implementation of the Renderer seam (DESIGN.md §4).
 //
-// Substitutable for Canvas2DRenderer without engine changes (LSP): the same
-// device-px batches arrive, each batch becomes one order-preserving draw call
-// (painter's algorithm, the same granularity Canvas2D uses), and look parity
-// comes from sharing the parity-critical pieces — arrowhead geometry, CPU
-// dash expansion matching subpath phase, Canvas2D-rasterized text, and
-// premultiplied source-over blending.
+// Verbs record into a FrameEncoder: geometry batches become instance records
+// copied straight from the frame's typed arrays, and text and icons become
+// textured rects into paged atlases. `endFrame` uploads the chunk once and
+// replays it. If an atlas page used earlier in the frame must be reused, the
+// draws recorded so far are flushed first, so they keep their texels.
 //
-// Two GL contexts (one per canvas layer) hold the GPU resources; the CPU-side
-// rasterizer, colour cache, and vertex scratch are shared. The scratch grows
-// geometrically and is reused — the hot path allocates nothing (§4).
+// Look parity with Canvas2D: the arrowhead geometry is shared, dashes follow
+// Canvas2D's phase rules (CPU expansion), polylines get joins, text is
+// rasterized by Canvas2D, and blending is premultiplied source-over.
 
+import type { OnDiagnostic } from '../../model/diagnostics';
 import type {
   ArrowheadBatch,
   ImageBatch,
-  Layer,
   LineBatch,
   NodeBatch,
+  RectBatch,
   Renderer,
   TextBatch,
   TextMetricsLite,
 } from '../types';
+import { PagedAtlas } from './atlas';
 import { ColorCache, TRANSPARENT, type PremultipliedRgba } from './color';
-import { expandDashes } from './dash';
+import { FrameEncoder, type TextureRef } from './encoder';
 import {
-  pushArrowhead,
-  pushLineQuad,
-  pushNodeQuad,
-  pushRect,
-  pushTexturedQuad,
-  VertexArray,
-} from './geometry';
-import { ATLAS_TEXTURE, GlLayer } from './layer';
-import { MODE_CIRCLE, MODE_SOLID, MODE_TEXTURED } from './shaders';
-import { TextRasterizer } from './textRaster';
+  colorParsingContext,
+  IconRasterizer,
+  TextRasterizer,
+} from './rasterizers';
+import { GlResources } from './resources';
 
-const WHITE: PremultipliedRgba = [1, 1, 1, 1];
+/** Atlas page edge in texels (capped by the context's MAX_TEXTURE_SIZE). */
+const PAGE_SIZE = 1024;
+const TEXT_PAGES = 4;
+const ICON_PAGES = 2;
+
+interface Glyph {
+  offsetX: number;
+  offsetY: number;
+  advance: number;
+}
+
+export interface WebGLRendererHooks {
+  /** The context came back after a loss; the host should redraw. */
+  onContextRestored?: () => void;
+  /** The context was lost; the host may fall back if it doesn't return. */
+  onContextLost?: () => void;
+  onDiagnostic?: OnDiagnostic;
+  /** Rasterizers, injectable for tests. */
+  text?: Pick<TextRasterizer, 'measure' | 'rasterize'>;
+  icons?: Pick<IconRasterizer, 'rasterize'>;
+}
 
 export class WebGLRenderer implements Renderer {
   readonly backend = 'webgl' as const;
-  private readonly raster = new TextRasterizer();
-  private readonly colors = new ColorCache(() => this.raster.context());
-  private readonly scratch = new VertexArray();
-  private readonly layers: Record<Layer, GlLayer>;
-  private current: GlLayer;
+  private readonly resources: GlResources;
+  private readonly encoder = new FrameEncoder();
+  private readonly colors = new ColorCache(colorParsingContext());
+  private readonly text: Pick<TextRasterizer, 'measure' | 'rasterize'>;
+  private readonly icons: Pick<IconRasterizer, 'rasterize'>;
+  private readonly textAtlas: PagedAtlas<Glyph>;
+  private readonly iconAtlas: PagedAtlas<null>;
+  private readonly imageIds = new WeakMap<object, number>();
+  private nextImageId = 1;
+  private clearColor: PremultipliedRgba | null = null;
+  private lost = false;
+  private readonly textRefs: TextureRef[] = [];
+  private readonly iconRefs: TextureRef[] = [];
 
   constructor(
-    baseCanvas: HTMLCanvasElement,
-    baseGl: WebGL2RenderingContext,
-    overlayCanvas: HTMLCanvasElement,
-    overlayGl: WebGL2RenderingContext,
-    private readonly background: string,
-    onContextRestored?: () => void,
+    private readonly canvas: HTMLCanvasElement,
+    readonly gl: WebGL2RenderingContext,
+    private readonly hooks: WebGLRendererHooks = {},
   ) {
-    const restored = (): void => onContextRestored?.();
-    this.layers = {
-      base: new GlLayer(baseCanvas, baseGl, this.raster, restored),
-      overlay: new GlLayer(overlayCanvas, overlayGl, this.raster, restored),
-    };
-    this.current = this.layers.base;
+    const pageSize = Math.min(
+      PAGE_SIZE,
+      gl.getParameter(gl.MAX_TEXTURE_SIZE) as number,
+    );
+    this.text = hooks.text ?? new TextRasterizer();
+    this.icons = hooks.icons ?? new IconRasterizer();
+    this.resources = new GlResources(gl, pageSize);
+    this.textAtlas = new PagedAtlas(pageSize, TEXT_PAGES);
+    this.iconAtlas = new PagedAtlas(pageSize, ICON_PAGES);
+    canvas.addEventListener('webglcontextlost', this.handleLost);
+    canvas.addEventListener('webglcontextrestored', this.handleRestored);
   }
+
+  private readonly handleLost = (event: Event): void => {
+    // preventDefault opts in to the restorable-context path.
+    event.preventDefault();
+    this.lost = true;
+    this.hooks.onContextLost?.();
+  };
+
+  private readonly handleRestored = (): void => {
+    this.textAtlas.clear();
+    this.iconAtlas.clear();
+    this.resources.init();
+    this.lost = false;
+    this.hooks.onContextRestored?.();
+  };
 
   resize(deviceWidth: number, deviceHeight: number): void {
-    this.layers.base.resize(deviceWidth, deviceHeight);
-    this.layers.overlay.resize(deviceWidth, deviceHeight);
+    this.canvas.width = deviceWidth;
+    this.canvas.height = deviceHeight;
+    this.resources.resize(deviceWidth, deviceHeight);
   }
 
-  beginFrame(layer: Layer): void {
-    this.current = this.layers[layer];
-    // Base clears to the theme background (like Canvas2D's fillRect), the
-    // overlay to transparent (like clearRect).
-    this.current.clear(
-      layer === 'base' ? this.colors.get(this.background) : TRANSPARENT,
-    );
+  beginFrame(clearColor: string | null): void {
+    this.encoder.reset();
+    this.clearColor =
+      clearColor === null ? TRANSPARENT : this.colors.get(clearColor);
+    this.textAtlas.beginFrame();
+    this.iconAtlas.beginFrame();
   }
 
   fillRect(
@@ -82,125 +123,212 @@ export class WebGLRenderer implements Renderer {
     height: number,
     color: string,
   ): void {
-    this.scratch.reset();
-    pushRect(this.scratch, x, y, width, height);
-    this.current.draw(this.scratch, MODE_SOLID, this.colors.get(color));
+    this.encoder.rect(x, y, width, height, this.colors.get(color));
+  }
+
+  drawRects(batch: RectBatch): void {
+    this.encoder.rects(batch, this.colors.get(batch.color));
   }
 
   drawLines(batch: LineBatch): void {
-    if (batch.segments.length === 0) return;
-    const dashed = batch.dash !== undefined && batch.dash.length > 0;
-    const segments = dashed
-      ? expandDashes(batch.segments, batch.dash as number[])
-      : batch.segments;
-    this.scratch.reset();
-    for (const s of segments) {
-      pushLineQuad(this.scratch, s.x1, s.y1, s.x2, s.y2, batch.width);
-    }
-    this.current.draw(this.scratch, MODE_SOLID, this.colors.get(batch.color));
+    this.encoder.lines(batch, this.colors.get(batch.color));
   }
 
   drawArrowheads(batch: ArrowheadBatch): void {
-    if (batch.items.length === 0) return;
-    this.scratch.reset();
-    for (const { x, y, angle } of batch.items) {
-      pushArrowhead(this.scratch, x, y, angle, batch.size);
-    }
-    this.current.draw(this.scratch, MODE_SOLID, this.colors.get(batch.color));
+    this.encoder.heads(batch, this.colors.get(batch.color));
   }
 
   drawNodes(batch: NodeBatch): void {
-    if (batch.items.length === 0) return;
-    this.scratch.reset();
-    for (const { x, y } of batch.items) {
-      pushNodeQuad(this.scratch, x, y, batch.radius);
-    }
-    this.current.draw(
-      this.scratch,
-      MODE_CIRCLE,
-      this.colors.get(batch.color),
-      batch.radius,
-    );
+    this.encoder.nodes(batch, this.colors.get(batch.color));
   }
 
   drawText(batch: TextBatch): void {
-    if (batch.items.length === 0) return;
-    const layer = this.current;
-    if (!layer.isDrawable) return;
-    const atlas = layer.getAtlas();
-    this.scratch.reset();
-    const flush = (): void => {
-      layer.draw(this.scratch, MODE_TEXTURED, WHITE, 0, ATLAS_TEXTURE);
-      this.scratch.reset();
-    };
-
-    for (const item of batch.items) {
-      let entry = atlas.getEntry(
-        item.text,
-        batch.font,
-        batch.color,
-        batch.baseline,
-      );
-      if (entry === 'full') {
-        // Grow/reset moves every entry: draw the quads computed so far first.
-        flush();
-        atlas.recover();
-        const retried = atlas.getEntry(
-          item.text,
-          batch.font,
-          batch.color,
-          batch.baseline,
-        );
-        entry = retried === 'full' ? null : retried;
-      }
-      if (entry === null) continue;
-
-      const alignShift =
+    if (this.lost) return;
+    const size = this.resources.pageSize;
+    for (let i = 0; i < batch.count; i++) {
+      const text = batch.texts[i] as string;
+      const glyph = this.glyph(text, batch.font, batch.color, batch.baseline);
+      if (glyph === null) continue;
+      const { offsetX, offsetY, advance } = glyph.value;
+      const shift =
         batch.align === 'center'
-          ? -entry.advance / 2
+          ? -advance / 2
           : batch.align === 'right'
-            ? -entry.advance
+            ? -advance
             : 0;
-      // Integer-snap the quad so NEAREST sampling stays 1:1 with the
-      // rasterized device pixels (crisp text, §3).
-      const x = Math.round(item.x + alignShift + entry.offsetX);
-      const y = Math.round(item.y + entry.offsetY);
-      const size = atlas.textureSize;
-      pushTexturedQuad(
-        this.scratch,
+      // Integer-snap the quad so nearest sampling stays 1:1 with the
+      // rasterized device pixels.
+      const x = Math.round((batch.xs[i] as number) + shift + offsetX);
+      const y = Math.round((batch.ys[i] as number) + offsetY);
+      this.encoder.textured(
+        this.ref(this.textRefs, 'text', glyph.page),
         x,
         y,
-        entry.width,
-        entry.height,
-        entry.x / size,
-        entry.y / size,
-        (entry.x + entry.width) / size,
-        (entry.y + entry.height) / size,
+        glyph.width,
+        glyph.height,
+        glyph.x / size,
+        glyph.y / size,
+        (glyph.x + glyph.width) / size,
+        (glyph.y + glyph.height) / size,
       );
     }
-    flush();
   }
 
   drawImages(batch: ImageBatch): void {
-    for (const { x, y, size, image } of batch.items) {
-      const texture = this.current.imageTexture(image);
-      if (texture === null) continue;
-      this.scratch.reset();
-      pushTexturedQuad(this.scratch, x, y, size, size, 0, 0, 1, 1);
-      this.current.draw(this.scratch, MODE_TEXTURED, WHITE, 0, texture);
+    if (this.lost) return;
+    const size = this.resources.pageSize;
+    let failed = false;
+    let failure: unknown;
+    for (const { x, y, size: side, image } of batch.items) {
+      let slot;
+      try {
+        slot = this.icon(image, side);
+      } catch (error) {
+        if (!failed) {
+          failed = true;
+          failure = error;
+        }
+        continue;
+      }
+      if (slot === null) continue;
+      this.encoder.textured(
+        this.ref(this.iconRefs, 'icon', slot.page),
+        x,
+        y,
+        side,
+        side,
+        slot.x / size,
+        slot.y / size,
+        (slot.x + side) / size,
+        (slot.y + side) / size,
+      );
     }
+    // Report the first failure (the guarded seam turns it into a diagnostic).
+    if (failed) throw failure;
   }
 
   measureText(text: string, font: string): TextMetricsLite {
-    return { width: this.raster.measure(text, font) };
+    return { width: this.text.measure(text, font) };
   }
 
-  endFrame(_layer: Layer): void {
-    /* Draw calls are issued immediately; the browser flushes at rAF end. */
+  endFrame(): void {
+    this.flush();
   }
 
   dispose(): void {
-    this.layers.base.dispose();
-    this.layers.overlay.dispose();
+    this.canvas.removeEventListener('webglcontextlost', this.handleLost);
+    this.canvas.removeEventListener(
+      'webglcontextrestored',
+      this.handleRestored,
+    );
+    if (!this.lost) this.resources.dispose();
+    // The engine discards this canvas: release the context slot now rather
+    // than at garbage collection, since browsers cap live contexts per page.
+    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+
+  /** Replay what was recorded so far; only the frame's first chunk clears. */
+  private flush(): void {
+    if (!this.lost) this.resources.execute(this.encoder, this.clearColor);
+    this.clearColor = null;
+    this.encoder.reset();
+  }
+
+  /** A text entry, rasterized and uploaded on first use. */
+  private glyph(
+    text: string,
+    font: string,
+    color: string,
+    baseline: TextBatch['baseline'],
+  ) {
+    const key = `${font}\u0000${baseline}\u0000${color}\u0000${text}`;
+    const cached = this.textAtlas.get(key);
+    if (cached !== undefined) return cached;
+    if (this.textAtlas.hasFailed(key)) return null;
+    const raster = this.text.rasterize(text, font, color, baseline);
+    if (raster === null) {
+      this.textAtlas.markFailed(key);
+      return null;
+    }
+    const slot = this.textAtlas.allocate(
+      key,
+      raster.width,
+      raster.height,
+      {
+        offsetX: raster.offsetX,
+        offsetY: raster.offsetY,
+        advance: raster.advance,
+      },
+      (_page, usedThisFrame) => {
+        if (usedThisFrame) this.flush();
+      },
+    );
+    if (slot === null) {
+      this.textAtlas.markFailed(key);
+      this.hooks.onDiagnostic?.({
+        code: 'render-error',
+        kind: 'renderer',
+        reason: `label "${text.slice(0, 40)}" is too large for the WebGL text atlas`,
+      });
+      return null;
+    }
+    this.resources.upload(
+      { atlas: 'text', page: slot.page },
+      slot.x,
+      slot.y,
+      raster.pixels,
+    );
+    return slot;
+  }
+
+  /** An icon entry at `side` device px, rasterized and uploaded on first use. */
+  private icon(image: unknown, side: number) {
+    if (typeof image !== 'object' || image === null) return null;
+    let id = this.imageIds.get(image);
+    if (id === undefined) {
+      id = this.nextImageId++;
+      this.imageIds.set(image, id);
+    }
+    const key = `${id}\u0000${side}`;
+    const cached = this.iconAtlas.get(key);
+    if (cached !== undefined) return cached;
+    if (this.iconAtlas.hasFailed(key)) return null;
+    let pixels: ImageData | null;
+    try {
+      pixels = this.icons.rasterize(image as CanvasImageSource, side);
+    } catch (error) {
+      // A cross-origin image without CORS: skip it from now on, report once.
+      this.iconAtlas.markFailed(key);
+      throw error;
+    }
+    if (pixels === null) return null;
+    const slot = this.iconAtlas.allocate(key, side, side, null, (_p, used) => {
+      if (used) this.flush();
+    });
+    if (slot === null) {
+      this.iconAtlas.markFailed(key);
+      return null;
+    }
+    this.resources.upload(
+      { atlas: 'icon', page: slot.page },
+      slot.x,
+      slot.y,
+      pixels,
+    );
+    return slot;
+  }
+
+  /** A stable TextureRef per (atlas, page), so commands can merge. */
+  private ref(
+    refs: TextureRef[],
+    atlas: TextureRef['atlas'],
+    page: number,
+  ): TextureRef {
+    let ref = refs[page];
+    if (ref === undefined) {
+      ref = { atlas, page };
+      refs[page] = ref;
+    }
+    return ref;
   }
 }

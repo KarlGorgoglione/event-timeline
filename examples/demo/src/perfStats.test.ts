@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { median, quantile, summarize } from './perfStats';
+import {
+  findRegressions,
+  median,
+  quantile,
+  summarize,
+  type PerfRecord,
+} from './perfStats';
 
 describe('perfStats', () => {
   it('median of an odd-length sample is the middle value (input unsorted)', () => {
@@ -34,5 +40,39 @@ describe('perfStats', () => {
     expect(s.count).toBe(4);
     expect(s.median).toBe(2);
     expect(s.min).toBe(2);
+  });
+});
+
+describe('findRegressions (§13, T-05)', () => {
+  const record = (
+    scenario: string,
+    baseMedian: number,
+    overlayMedian = 1,
+  ): PerfRecord => ({
+    backend: 'canvas2d',
+    scenario,
+    baseMedian,
+    baseP95: baseMedian,
+    overlayMedian,
+    overlayP95: overlayMedian,
+    cadenceP95: 16.7,
+  });
+
+  it('flags a scenario slower by both the ratio and the absolute floor', () => {
+    const regressions = findRegressions(
+      [record('a', 10), record('b', 2), record('c', 10, 2)],
+      [record('a', 13), record('b', 2.9), record('c', 10, 3.5)],
+    );
+    // b: +45% but only 0.9 ms — jitter, not a regression.
+    expect(regressions).toEqual([
+      { key: 'canvas2d/a', metric: 'baseMedian', baseline: 10, current: 13 },
+      { key: 'canvas2d/c', metric: 'overlayMedian', baseline: 2, current: 3.5 },
+    ]);
+  });
+
+  it('ignores scenarios missing from either run, and improvements', () => {
+    expect(
+      findRegressions([record('a', 10)], [record('a', 5), record('new', 99)]),
+    ).toEqual([]);
   });
 });

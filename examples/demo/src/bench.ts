@@ -12,7 +12,7 @@ import { makeSynthetic, type DemoDatum } from './synthetic';
 const CSS_WIDTH = 1280;
 const CSS_HEIGHT = 720;
 
-/** Element counts scaled per dataset size, mirroring the demo's datasets (§15). */
+/** Element counts scaled per dataset size, mirroring the demo's datasets. */
 function elementCountFor(eventCount: number): number {
   if (eventCount >= 100_000) return 500;
   if (eventCount >= 50_000) return 400;
@@ -21,8 +21,11 @@ function elementCountFor(eventCount: number): number {
 }
 
 export interface BenchApi {
-  /** Replace the dataset with a seeded synthetic set of `eventCount` events. */
-  load(eventCount: number): void;
+  /**
+   * Replace the dataset with a seeded synthetic set of `eventCount` events
+   * over `elementCount` elements (default: scaled with the event count).
+   */
+  load(eventCount: number, elementCount?: number): void;
   /** Frame the whole data extent — the §13 worst case (full zoom-out, O(n)). */
   fit(): void;
   /**
@@ -37,6 +40,8 @@ export interface BenchApi {
   overlayNudge(): void;
   /** Clear the recorded frame buffer. */
   reset(): void;
+  /** The backend actually drawing the base layer (after any fallback). */
+  backend(): string | null;
   /** Per-frame timings recorded since the last reset(). */
   frames: FrameStats[];
 }
@@ -45,23 +50,21 @@ function setup(): BenchApi {
   const root = document.getElementById('bench');
   if (root === null) throw new Error('#bench container not found');
 
-  const base = document.createElement('canvas');
-  const overlay = document.createElement('canvas');
-  for (const canvas of [base, overlay]) {
-    canvas.style.position = 'absolute';
-    canvas.style.inset = '0';
-    canvas.style.width = `${CSS_WIDTH}px`;
-    canvas.style.height = `${CSS_HEIGHT}px`;
-    root.appendChild(canvas);
-  }
-
   const frames: FrameStats[] = [];
-  const engine = new TimelineEngine<DemoDatum>(base, overlay, {
-    // The §13 budgets are calibrated against the Canvas2D backend; 'auto'
-    // would pick WebGL (software GL in CI) and shift the baselines.
-    renderer: 'canvas2d',
+  // The backend under test: `?renderer=webgl|canvas2d|auto` (default
+  // canvas2d), so every backend runs the same scenarios (§13).
+  const params = new URLSearchParams(location.search);
+  const requested = params.get('renderer');
+  const renderer =
+    requested === 'webgl' || requested === 'auto' ? requested : 'canvas2d';
+  // `?maxMarkers=` overrides the aggregation budget (`Infinity` turns it off).
+  const maxMarkers = Number(params.get('maxMarkers') ?? NaN);
+  const engine = new TimelineEngine<DemoDatum>({
+    renderer,
+    ...(Number.isNaN(maxMarkers) ? {} : { clustering: { maxMarkers } }),
     onFrameStats: (stats) => frames.push(stats),
   });
+  engine.mount(root, { autoResize: false });
   // DPR is pinned to 1 by the perf project's deviceScaleFactor (§13 baseline).
   engine.resize(CSS_WIDTH, CSS_HEIGHT, 1);
 
@@ -70,26 +73,22 @@ function setup(): BenchApi {
   let elementCount = 0;
 
   /**
-   * Real `element:<id>` selection keys (matching the engine's `targetKey`), so
-   * `drawOverlay` actually strokes highlights instead of skipping every target —
-   * the cost the ≤4ms overlay budget bounds (§13). Element-line targets are
-   * present every base draw (not window-culled away like off-screen events), so
-   * a fixed slice reliably exercises `drawHighlight`. Offset by one between the
-   * two toggle states so the set always changes (`select` no-ops on an equal set).
+   * Ten real element ids, so the overlay actually strokes highlights (the
+   * cost the ≤4ms overlay budget bounds, §13). Element lines are drawn every
+   * base frame, so a fixed slice reliably exercises the highlight path. Offset
+   * by one between the two toggle states so the selection always changes.
    */
-  function selectionKeys(offset: number): string[] {
+  function selectedElements(offset: number): string[] {
     const n = Math.min(10, elementCount);
-    const keys: string[] = [];
-    for (let i = 0; i < n; i++) {
-      keys.push(`element:el-${(i + offset) % elementCount}`);
-    }
-    return keys;
+    const ids: string[] = [];
+    for (let i = 0; i < n; i++) ids.push(`el-${(i + offset) % elementCount}`);
+    return ids;
   }
 
   return {
     frames,
-    load(eventCount) {
-      elementCount = elementCountFor(eventCount);
+    load(eventCount, elements) {
+      elementCount = elements ?? elementCountFor(eventCount);
       engine.setData(makeSynthetic(eventCount, elementCount, 1));
     },
     fit() {
@@ -113,10 +112,13 @@ function setup(): BenchApi {
       // (marking the overlay dirty) and drawOverlay actually strokes the selected
       // element highlights — the cost the ≤4ms overlay budget bounds (§13).
       selectToggle = !selectToggle;
-      engine.select(selectionKeys(selectToggle ? 0 : 1));
+      engine.select({ elements: selectedElements(selectToggle ? 0 : 1) });
     },
     reset() {
       frames.length = 0;
+    },
+    backend() {
+      return engine.getRendererBackend();
     },
   };
 }

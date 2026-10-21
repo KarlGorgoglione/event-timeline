@@ -1,8 +1,8 @@
 import type { TimelineData } from '@event-timeline/react';
 import type { DemoDatum } from './synthetic';
 
-// A hand-built dataset (10 elements, ~24 events) exercising every Phase 2
-// feature: direction-aware arrows with labels, element labels + icons (data-URI
+// A hand-built dataset (10 elements, ~24 events) exercising the drawing
+// features: direction-aware arrows with labels, element labels + icons (data-URI
 // SVGs — a person glyph and a banknote), a self-event (cash → cash), and
 // long-range crossing events
 // that span many rows so vertical row-interval culling can be observed when

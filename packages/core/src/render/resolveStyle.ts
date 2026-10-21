@@ -24,12 +24,12 @@ export function overlayStyle<T extends object>(
   base: T,
   ...partials: Array<Partial<T> | undefined>
 ): T {
-  const out = { ...base } as T;
+  const out = { ...base };
   for (const partial of partials) {
     if (partial === undefined) continue;
     for (const key of Object.keys(partial) as Array<keyof T>) {
       const value = partial[key];
-      if (value !== undefined) out[key] = value as T[keyof T];
+      if (value !== undefined) out[key] = value;
     }
   }
   return out;

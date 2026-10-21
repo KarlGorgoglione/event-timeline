@@ -1,9 +1,10 @@
 import { expect, test, type Page } from '@playwright/test';
+import { openFixture } from './fixturePage';
 
-// Phase 3 acceptance (DESIGN.md §15): zoom-about-cursor, vertical scroll, hover
-// highlight + tooltip, and click selection. These drive the demo through real
-// pointer/wheel input and assert via the demo's status bar (text, robust) and
-// the overlay canvas pixels (the selection/hover highlight actually drew).
+// Interaction (DESIGN.md §9): zoom-about-cursor, vertical scroll, hover
+// highlight + tooltip, and click selection. These drive the fixture page
+// through real pointer/wheel input and assert via its status strip (text,
+// robust) and the overlay canvas pixels (the highlight actually drew).
 
 /** Centre point of the timeline overlay canvas in client (viewport) px. */
 async function overlayCentre(page: Page): Promise<{ x: number; y: number }> {
@@ -28,8 +29,7 @@ async function rootBox(page: Page) {
 test('hovering an element line shows a tooltip and updates the status bar', async ({
   page,
 }) => {
-  await page.goto('/?renderer=canvas2d');
-  await expect(page.getByTestId('timeline-root')).toBeVisible();
+  await openFixture(page);
 
   const box = await rootBox(page);
   // Sweep across row centres until we land on an element line (lines are thin).
@@ -52,8 +52,7 @@ test('hovering an element line shows a tooltip and updates the status bar', asyn
 test('clicking a primitive selects it (status + overlay highlight)', async ({
   page,
 }) => {
-  await page.goto('/?renderer=canvas2d');
-  await expect(page.getByTestId('timeline-root')).toBeVisible();
+  await openFixture(page);
 
   const box = await rootBox(page);
   const x = box.x + box.width * 0.5;
@@ -72,7 +71,7 @@ test('clicking a primitive selects it (status + overlay highlight)', async ({
 
   // Move the pointer to an empty patch of canvas so hover clears: whatever
   // remains on the overlay is the *selection* highlight, drawn without a base
-  // redraw (§4). Bottom-left is below the element rows and clear of the panel.
+  // redraw (§4). Bottom-left is below the element rows.
   await page.mouse.move(box.x + 2, box.y + box.height - 2);
   await expect(page.getByTestId('status-hover')).toHaveText('hover: —');
 
@@ -96,8 +95,7 @@ test('clicking a primitive selects it (status + overlay highlight)', async ({
 test('ctrl+wheel zooms about the cursor (pxPerMs increases)', async ({
   page,
 }) => {
-  await page.goto('/?renderer=canvas2d');
-  await expect(page.getByTestId('timeline-root')).toBeVisible();
+  await openFixture(page);
   // Wait for the first viewport emission (auto-fit).
   await expect
     .poll(() => statusNumber(page, 'status-pxperms'))
@@ -130,7 +128,11 @@ test('ctrl+wheel zooms about the cursor (pxPerMs increases)', async ({
     .toBeGreaterThan(before);
 });
 
-/** Cheap hash of the base canvas, used to detect when a rebuild has repainted. */
+/**
+ * Cheap hash of the base canvas, used to detect when a redraw has repainted;
+ * -1 while the canvas can't be read (WebKit briefly refuses getImageData
+ * under load).
+ */
 async function baseCanvasHash(page: Page): Promise<number> {
   return page.evaluate(() => {
     const root = document.querySelector('[data-testid="timeline-root"]');
@@ -138,7 +140,12 @@ async function baseCanvasHash(page: Page): Promise<number> {
     if (!(canvas instanceof HTMLCanvasElement) || canvas.width === 0) return -1;
     const ctx = canvas.getContext('2d');
     if (ctx === null) return -1;
-    const { data } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    let data: Uint8ClampedArray;
+    try {
+      ({ data } = ctx.getImageData(0, 0, canvas.width, canvas.height));
+    } catch {
+      return -1;
+    }
     let hash = 0;
     for (let i = 0; i < data.length; i += 64)
       hash = (hash + (data[i] ?? 0)) | 0;
@@ -146,13 +153,11 @@ async function baseCanvasHash(page: Page): Promise<number> {
   });
 }
 
-test('editing a panel parameter preserves pan/zoom (no camera reset, §12)', async ({
+test('changing the theme preserves pan/zoom (no camera reset, §12)', async ({
   page,
 }) => {
-  await page.goto('/?renderer=canvas2d');
-  await expect(page.getByTestId('timeline-root')).toBeVisible();
   // Tall dataset so vertical scroll has somewhere to go.
-  await page.getByLabel('Dataset').selectOption('synthetic10k');
+  await openFixture(page, { dataset: 'synthetic10k' });
   await expect
     .poll(() => statusNumber(page, 'status-pxperms'))
     .toBeGreaterThan(0);
@@ -191,15 +196,21 @@ test('editing a panel parameter preserves pan/zoom (no camera reset, §12)', asy
   const pxBefore = await statusNumber(page, 'status-pxperms');
   const scrollBefore = await statusNumber(page, 'status-scrolly');
 
-  // Edit a theme parameter (row separators). The React binding rebuilds the
-  // engine on a theme-reference change; the new engine must restore the prior
-  // view instead of snapping back to fit (DESIGN.md §12).
+  // Edit a theme parameter (row separators): the engine takes the new theme
+  // in place and must keep the view instead of snapping back to fit (§12).
+  await expect.poll(() => baseCanvasHash(page)).not.toBe(-1);
   const hashBefore = await baseCanvasHash(page);
-  await page.getByText('Rows & layout').click();
-  await page.getByRole('switch', { name: 'Row separators' }).click();
-  // Wait until the rebuilt engine has repainted (separators now drawn) — at
-  // which point the restored camera is the engine's final state for this frame.
-  await expect.poll(() => baseCanvasHash(page)).not.toBe(hashBefore);
+  await page.evaluate(() =>
+    window.__e2e!.patchTheme({ rowSeparator: { enabled: true } }),
+  );
+  // Wait until the engine has repainted (separators now drawn) — at which
+  // point the camera is the engine's final state for this frame.
+  await expect
+    .poll(async () => {
+      const hash = await baseCanvasHash(page);
+      return hash !== -1 && hash !== hashBefore;
+    })
+    .toBe(true);
 
   const pxAfter = await statusNumber(page, 'status-pxperms');
   const scrollAfter = await statusNumber(page, 'status-scrolly');
@@ -214,10 +225,8 @@ test('editing a panel parameter preserves pan/zoom (no camera reset, §12)', asy
 test('vertical wheel scrolls the tall dataset (scrollY increases)', async ({
   page,
 }) => {
-  await page.goto('/?renderer=canvas2d');
-  await expect(page.getByTestId('timeline-root')).toBeVisible();
-  // 200-row synthetic set, selected via the panel's dataset selector.
-  await page.getByLabel('Dataset').selectOption('synthetic10k');
+  // 200-row synthetic set.
+  await openFixture(page, { dataset: 'synthetic10k' });
 
   const { x, y } = await overlayCentre(page);
   await page.evaluate(

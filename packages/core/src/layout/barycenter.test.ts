@@ -86,11 +86,11 @@ describe('barycenter', () => {
     expect(barycenter.order(elements, events)).toEqual(['a', 'b', 'c']);
   });
 
-  // §15 acceptance: measurable crossing reduction. The two fixtures below cover
+  // Measurable crossing reduction (§7). The two fixtures below cover
   // the two regimes that matter — separable clusters with no edges between them,
   // and a single connected component whose constraints actually compete.
 
-  describe('crossing reduction — disconnected clusters (§15 acceptance)', () => {
+  describe('crossing reduction — disconnected clusters (§7)', () => {
     // Two *disconnected* triangles {a,c,e} and {b,d,f} (no edge spans them).
     // Self-events at t=1..6 fix the chronological seed order [a,b,c,d,e,f],
     // interleaving the clusters; the connecting edges (t≥10) don't change
@@ -141,11 +141,11 @@ describe('barycenter', () => {
     });
   });
 
-  describe('crossing reduction — connected component (§15 acceptance)', () => {
+  describe('crossing reduction — connected component (§7)', () => {
     // The same two triangles, now joined by a bridge edge e↔b into a *single
     // connected component*. The bridge couples the clusters, so the seed order
     // has competing constraints (it is no longer separable) — the regime the
-    // §15 criterion ("a connected fixture") actually targets. The bridge does
+    // case (a connected fixture) actually targets. The bridge does
     // not change any first-event time, so the seed order is still [a..f].
     const elements = [el('a'), el('b'), el('c'), el('d'), el('e'), el('f')];
     const events = [

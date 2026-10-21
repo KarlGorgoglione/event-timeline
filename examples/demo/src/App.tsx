@@ -9,6 +9,7 @@ import {
 import {
   Timeline,
   type HitResult,
+  type Selection,
   type TimelineHandle,
 } from '@event-timeline/react';
 import { demoData } from './fixture';
@@ -23,7 +24,7 @@ import {
 } from './panel/buildProps';
 import { Panel } from './panel/Panel';
 
-/** Events appended per streaming tick, and the tick interval (Phase 7, §10). */
+/** Events appended per streaming tick, and the tick interval (§10). */
 const STREAM_BATCH = 12;
 const STREAM_INTERVAL_MS = 250;
 
@@ -49,13 +50,12 @@ function describeHit(hit: HitResult<DemoDatum> | null): string {
 }
 
 /**
- * The demo: a Canvas-2D timeline plus a floating glass customization panel that
+ * The demo: a canvas timeline plus a floating glass customization panel that
  * drives the full §11 look-and-feel surface. All editable state lives in a
  * single `DemoConfig` (see `panel/config.ts`); pure builders turn its `theme`
- * and `options` slices into the memoised engine props, and `useDeferredValue`
- * keeps slider drags smooth by letting the (engine-rebuilding) prop updates lag
- * the input under load — the §12 referential-stability contract holds because
- * each prop is memoised on its own slice.
+ * and `options` slices into engine props, which the binding applies in place.
+ * `useDeferredValue` keeps slider drags smooth at 50k events by letting the
+ * redraws lag the input under load.
  */
 export function App() {
   const ref = useRef<TimelineHandle<DemoDatum>>(null);
@@ -66,8 +66,7 @@ export function App() {
   const [viewport, setViewport] = useState({ pxPerMs: 0, scrollY: 0 });
   const [streamCount, setStreamCount] = useState(0);
   // The backend the engine actually picked (may differ from the preference
-  // under 'auto'). `ready` re-fires on every engine rebuild, so this tracks
-  // renderer switches from the panel.
+  // under 'auto'); re-read whenever the options change the preference.
   const [backend, setBackend] = useState('—');
   const onReady = useCallback(
     () => setBackend(ref.current?.getRendererBackend() ?? '—'),
@@ -80,13 +79,16 @@ export function App() {
   const viewRef = useRef<[number, number]>([0, 0]);
   const streamCounterRef = useRef(0);
 
-  // Stable callbacks so the engine isn't re-created on every render (§12).
   const onHover = useCallback(
     (hit: HitResult<DemoDatum> | null) => setHover(hit),
     [],
   );
   const onSelectionChange = useCallback(
-    (ids: string[]) => setSelected(ids),
+    (selection: Selection) =>
+      setSelected([
+        ...selection.elements.map((id) => `element ${id}`),
+        ...selection.events.map((id) => `event ${id}`),
+      ]),
     [],
   );
   const onViewportChange = useCallback(
@@ -97,9 +99,8 @@ export function App() {
     [],
   );
 
-  // Engine props, each memoised on its own config slice so editing a colour
-  // never churns `options` and vice versa (§12). Theme/options are deferred so
-  // rapid edits don't rebuild the engine faster than it can keep up at 50k.
+  // Engine props, each built from its own config slice. Theme/options are
+  // deferred so rapid edits don't redraw faster than the engine keeps up at 50k.
   const deferredTheme = useDeferredValue(config.theme);
   const deferredOptions = useDeferredValue(config.options);
   const theme = useMemo(() => buildTheme(deferredTheme), [deferredTheme]);
@@ -115,6 +116,9 @@ export function App() {
     () => buildFormatters(config.formatters),
     [config.formatters],
   );
+  useEffect(() => {
+    setBackend(ref.current?.getRendererBackend() ?? '—');
+  }, [options]);
 
   // Custom tooltip: events show their UTC date under the label (§9, §12).
   const renderTooltip = useCallback((hit: HitResult<DemoDatum>) => {
@@ -131,14 +135,14 @@ export function App() {
         );
       }
       case 'element':
-        return hit.element.label;
+        return hit.element.label ?? hit.element.id;
       case 'cluster':
         return `${hit.count} events`;
     }
   }, []);
 
   // Datasets are memoised for a stable `data` reference (§12): the 10k set is
-  // built once, the 50k set lazily the first time it is selected (§15).
+  // built once, the 50k set lazily the first time it is selected.
   const synthetic = useMemo(() => makeSynthetic(), []);
   const synthetic50k = useMemo(
     () =>
@@ -165,7 +169,7 @@ export function App() {
     setStreamCount(0);
   }, [data]);
 
-  // Phase 7 streaming (§10): while on, append a small batch via the imperative
+  // Streaming (§10): while on, append a small batch via the imperative
   // `addEvents` each tick — no full `setData`, so existing rows stay put.
   useEffect(() => {
     if (!config.streaming) return;
