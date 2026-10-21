@@ -44,8 +44,9 @@ Run from the repo root (Node ≥ 22, `.nvmrc`; pnpm via `corepack enable pnpm`).
   with `--workers=1`). Browsers: `pnpm exec playwright install --with-deps
 chromium firefox webkit`.
 - E2E specs drive the fixture page `examples/demo/e2e.html` through its URL and
-  `window.__e2e`, never through the demo's panel. Perf uses
-  `examples/demo/bench.html`.
+  `window.__e2e`, never through the showcase UI. Its presets and data hooks
+  (`examples/demo/src/e2e/fixtureTheme.ts`) are pinned by a snapshot and the
+  goldens: don't change their values. Perf uses `examples/demo/bench.html`.
 
 ## Branching and releases
 

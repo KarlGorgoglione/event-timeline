@@ -9,13 +9,21 @@ a GPU-backed WebGL2 renderer, with Canvas2D as the fallback.
 reference](https://karlgorgoglione.github.io/event-timeline/api/) · [Design
 specification](docs/DESIGN.md) · [Decision records](docs/adr/README.md)
 
+[![The event-timeline showcase: a money-flow network on the Midnight theme](docs/images/demo.png)](https://karlgorgoglione.github.io/event-timeline/)
+
+The demo is a showcase of the library: seven scenarios (a money-flow tour, an
+AML investigation, a production incident, a shipping network, live payments, a
+50,000-event scale test and a bring-your-own-data playground) and seven themes.
+Its Advanced view edits every theme key and option, and exports the result as
+React code.
+
 ## Packages
 
-| Package                                             | Description                                 |
-| --------------------------------------------------- | ------------------------------------------- |
-| [`@event-timeline/core`](packages/core/README.md)   | Framework-free engine (pure TypeScript).    |
-| [`@event-timeline/react`](packages/react/README.md) | React binding: `<Timeline />`.              |
-| `examples/demo`                                     | Vite playground, perf harness, e2e fixture. |
+| Package                                             | Description                              |
+| --------------------------------------------------- | ---------------------------------------- |
+| [`@event-timeline/core`](packages/core/README.md)   | Framework-free engine (pure TypeScript). |
+| [`@event-timeline/react`](packages/react/README.md) | React binding: `<Timeline />`.           |
+| `examples/demo`                                     | Showcase app, perf harness, e2e fixture. |
 
 ## Install
 

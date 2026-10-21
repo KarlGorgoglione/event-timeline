@@ -9,7 +9,7 @@ import type {
 // demo, the Playwright tests and the perf harness see the same data.
 
 /** Mulberry32 — a tiny, fast, deterministic 32-bit PRNG. */
-function mulberry32(seed: number): () => number {
+export function mulberry32(seed: number): () => number {
   let a = seed >>> 0;
   return () => {
     a = (a + 0x6d2b79f5) | 0;
@@ -117,7 +117,9 @@ export function makeStreamBatch(
       sourceId: elements[sourceIndex]!.id,
       targetId: elements[targetIndex]!.id,
       time: tStart + Math.floor(rand() * span),
-      data: { category: sourceIndex % CATEGORY_COUNT },
+      // Streamed transfers are background activity: bucket 0, never a
+      // pattern colour (the AML palette reserves 1–4 for its patterns).
+      data: { category: 0 },
     });
   }
   return batch;

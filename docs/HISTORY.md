@@ -73,3 +73,13 @@ on a laptop GPU, 50k events hold a 16.7 ms frame interval in every regime
 zoom-out), and so does 100k zoom-out. Canvas2D meets the base budget at 50k
 zoom-out on the median (about 14 ms) but its frame interval is about 50 ms there,
 because rasterization dominates; it remains the fallback.
+
+## The showcase demo
+
+The demo's floating customisation panel became a showcase app: seven
+scenarios that each exercise different features (money flows, an AML
+investigation, a production incident, a shipping network, live streaming, a
+50k scale test, a JSON playground), seven validated theme presets, a Simple
+view for visitors and an Advanced view whose field schema covers every theme
+key and option, with code export and shareable URLs. The e2e fixture kept its
+presets and data hooks unchanged, pinned by a snapshot.
