@@ -1,0 +1,363 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`e2e fixture theme contract > builds every preset unchanged > Dark 1`] = `
+{
+  "background": "#161b22",
+  "cluster": {
+    "color": "#d29922",
+    "markerBonus": 2,
+    "textColor": "#d29922",
+  },
+  "element": {
+    "iconSize": 16,
+    "labelColor": "#e6e6e6",
+    "labelFont": "12px system-ui, sans-serif",
+    "lineColor": "#5aa0ff",
+    "lineDash": [],
+    "lineWidth": 2,
+  },
+  "emphasis": {
+    "hoverColor": "#ffd166",
+    "hoverWidthBonus": 2,
+    "radiusBonus": 1,
+    "selectionColor": "#4fc3f7",
+    "selectionWidthBonus": 2,
+  },
+  "event": {
+    "arrowColor": "#8b949e",
+    "arrowDash": [],
+    "arrowWidth": 1,
+    "arrowheadSize": 6,
+    "labelBoxBackground": "transparent",
+    "labelBoxBorderColor": "transparent",
+    "labelBoxBorderDash": [],
+    "labelBoxBorderWidth": 0,
+    "labelBoxPadding": 3,
+    "labelColor": "#c9d1d9",
+    "labelFont": "11px system-ui, sans-serif",
+    "nodeRadius": 3,
+  },
+  "grid": {
+    "color": "rgba(255, 255, 255, 0.08)",
+    "dash": [],
+    "width": 1,
+  },
+  "header": {
+    "font": "12px system-ui, sans-serif",
+    "height": 44,
+    "majorTickRatio": 0.32,
+    "minorTickRatio": 0.72,
+    "textColor": "#9aa4b2",
+  },
+  "layout": {
+    "edgePadding": 8,
+    "eventLabelGap": 4,
+    "lineLead": 12,
+    "markerGap": 8,
+    "rowGap": 6,
+    "rowHeight": 28,
+  },
+  "rowSeparator": {
+    "color": "rgba(255, 255, 255, 0.06)",
+    "dash": [],
+    "enabled": false,
+    "width": 1,
+  },
+}
+`;
+
+exports[`e2e fixture theme contract > builds every preset unchanged > High-contrast 1`] = `
+{
+  "background": "#000000",
+  "cluster": {
+    "color": "#ffd54f",
+    "markerBonus": 2,
+    "textColor": "#ffffff",
+  },
+  "element": {
+    "iconSize": 16,
+    "labelColor": "#ffffff",
+    "labelFont": "12px system-ui, sans-serif",
+    "lineColor": "#ffffff",
+    "lineDash": [],
+    "lineWidth": 3,
+  },
+  "emphasis": {
+    "hoverColor": "#ffeb3b",
+    "hoverWidthBonus": 3,
+    "radiusBonus": 2,
+    "selectionColor": "#00e5ff",
+    "selectionWidthBonus": 3,
+  },
+  "event": {
+    "arrowColor": "#ffffff",
+    "arrowDash": [],
+    "arrowWidth": 2,
+    "arrowheadSize": 6,
+    "labelBoxBackground": "transparent",
+    "labelBoxBorderColor": "transparent",
+    "labelBoxBorderDash": [],
+    "labelBoxBorderWidth": 0,
+    "labelBoxPadding": 3,
+    "labelColor": "#ffffff",
+    "labelFont": "11px system-ui, sans-serif",
+    "nodeRadius": 3,
+  },
+  "grid": {
+    "color": "rgba(255,255,255,0.35)",
+    "dash": [],
+    "width": 1,
+  },
+  "header": {
+    "font": "12px system-ui, sans-serif",
+    "height": 44,
+    "majorTickRatio": 0.32,
+    "minorTickRatio": 0.72,
+    "textColor": "#ffffff",
+  },
+  "layout": {
+    "edgePadding": 8,
+    "eventLabelGap": 4,
+    "lineLead": 12,
+    "markerGap": 8,
+    "rowGap": 6,
+    "rowHeight": 28,
+  },
+  "rowSeparator": {
+    "color": "rgba(255,255,255,0.25)",
+    "dash": [],
+    "enabled": true,
+    "width": 1,
+  },
+}
+`;
+
+exports[`e2e fixture theme contract > builds every preset unchanged > Light 1`] = `
+{
+  "background": "#f7f8fa",
+  "cluster": {
+    "color": "#b45309",
+    "markerBonus": 2,
+    "textColor": "#b45309",
+  },
+  "element": {
+    "iconSize": 16,
+    "labelColor": "#1f2933",
+    "labelFont": "12px system-ui, sans-serif",
+    "lineColor": "#2563eb",
+    "lineDash": [],
+    "lineWidth": 2,
+  },
+  "emphasis": {
+    "hoverColor": "#d97706",
+    "hoverWidthBonus": 2,
+    "radiusBonus": 1,
+    "selectionColor": "#2563eb",
+    "selectionWidthBonus": 2,
+  },
+  "event": {
+    "arrowColor": "#52606d",
+    "arrowDash": [],
+    "arrowWidth": 1,
+    "arrowheadSize": 6,
+    "labelBoxBackground": "transparent",
+    "labelBoxBorderColor": "transparent",
+    "labelBoxBorderDash": [],
+    "labelBoxBorderWidth": 0,
+    "labelBoxPadding": 3,
+    "labelColor": "#1f2933",
+    "labelFont": "11px system-ui, sans-serif",
+    "nodeRadius": 3,
+  },
+  "grid": {
+    "color": "rgba(0,0,0,0.10)",
+    "dash": [],
+    "width": 1,
+  },
+  "header": {
+    "font": "12px system-ui, sans-serif",
+    "height": 44,
+    "majorTickRatio": 0.32,
+    "minorTickRatio": 0.72,
+    "textColor": "#5a6472",
+  },
+  "layout": {
+    "edgePadding": 8,
+    "eventLabelGap": 4,
+    "lineLead": 12,
+    "markerGap": 8,
+    "rowGap": 6,
+    "rowHeight": 28,
+  },
+  "rowSeparator": {
+    "color": "rgba(255, 255, 255, 0.06)",
+    "dash": [],
+    "enabled": false,
+    "width": 1,
+  },
+}
+`;
+
+exports[`e2e fixture theme contract > builds every preset unchanged > Minimal 1`] = `
+{
+  "background": "#0e1116",
+  "cluster": {
+    "color": "#d29922",
+    "markerBonus": 2,
+    "textColor": "#d29922",
+  },
+  "element": {
+    "iconSize": 16,
+    "labelColor": "#8a93a0",
+    "labelFont": "12px system-ui, sans-serif",
+    "lineColor": "#3a4a63",
+    "lineDash": [],
+    "lineWidth": 1,
+  },
+  "emphasis": {
+    "hoverColor": "#ffd166",
+    "hoverWidthBonus": 2,
+    "radiusBonus": 1,
+    "selectionColor": "#4fc3f7",
+    "selectionWidthBonus": 2,
+  },
+  "event": {
+    "arrowColor": "#4a5568",
+    "arrowDash": [],
+    "arrowWidth": 1,
+    "arrowheadSize": 6,
+    "labelBoxBackground": "transparent",
+    "labelBoxBorderColor": "transparent",
+    "labelBoxBorderDash": [],
+    "labelBoxBorderWidth": 0,
+    "labelBoxPadding": 3,
+    "labelColor": "#8a93a0",
+    "labelFont": "11px system-ui, sans-serif",
+    "nodeRadius": 2,
+  },
+  "grid": {
+    "color": "transparent",
+    "dash": [],
+    "width": 1,
+  },
+  "header": {
+    "font": "12px system-ui, sans-serif",
+    "height": 44,
+    "majorTickRatio": 0.32,
+    "minorTickRatio": 0.72,
+    "textColor": "#9aa4b2",
+  },
+  "layout": {
+    "edgePadding": 8,
+    "eventLabelGap": 4,
+    "lineLead": 12,
+    "markerGap": 8,
+    "rowGap": 6,
+    "rowHeight": 28,
+  },
+  "rowSeparator": {
+    "color": "rgba(255, 255, 255, 0.06)",
+    "dash": [],
+    "enabled": false,
+    "width": 1,
+  },
+}
+`;
+
+exports[`e2e fixture theme contract > keeps the data-driven colour resolvers unchanged 1`] = `
+[
+  {
+    "category": null,
+    "element": {
+      "lineColor": "#6b7280",
+    },
+    "event": {
+      "arrowColor": "#6b7280",
+      "labelBoxBackground": "rgba(0, 0, 0, 0.55)",
+      "labelBoxBorderColor": "#6b7280",
+      "labelBoxBorderWidth": 1,
+    },
+  },
+  {
+    "category": 0,
+    "element": {
+      "lineColor": "#6b7280",
+    },
+    "event": {
+      "arrowColor": "#6b7280",
+      "labelBoxBackground": "rgba(0, 0, 0, 0.55)",
+      "labelBoxBorderColor": "#6b7280",
+      "labelBoxBorderWidth": 1,
+    },
+  },
+  {
+    "category": 1,
+    "element": {
+      "lineColor": "#98c379",
+    },
+    "event": {
+      "arrowColor": "#98c379",
+      "labelBoxBackground": "rgba(0, 0, 0, 0.55)",
+      "labelBoxBorderColor": "#98c379",
+      "labelBoxBorderWidth": 1,
+    },
+  },
+  {
+    "category": 2,
+    "element": {
+      "lineColor": "#61afef",
+    },
+    "event": {
+      "arrowColor": "#61afef",
+      "labelBoxBackground": "rgba(0, 0, 0, 0.55)",
+      "labelBoxBorderColor": "#61afef",
+      "labelBoxBorderWidth": 1,
+    },
+  },
+  {
+    "category": 3,
+    "element": {
+      "lineColor": "#c678dd",
+    },
+    "event": {
+      "arrowColor": "#c678dd",
+      "labelBoxBackground": "rgba(0, 0, 0, 0.55)",
+      "labelBoxBorderColor": "#c678dd",
+      "labelBoxBorderWidth": 1,
+    },
+  },
+  {
+    "category": 4,
+    "element": {
+      "lineColor": "#e5c07b",
+    },
+    "event": {
+      "arrowColor": "#e5c07b",
+      "labelBoxBackground": "rgba(0, 0, 0, 0.55)",
+      "labelBoxBorderColor": "#e5c07b",
+      "labelBoxBorderWidth": 1,
+    },
+  },
+  {
+    "category": 5,
+    "element": {
+      "lineColor": "#6b7280",
+    },
+    "event": {
+      "arrowColor": "#6b7280",
+      "labelBoxBackground": "rgba(0, 0, 0, 0.55)",
+      "labelBoxBorderColor": "#6b7280",
+      "labelBoxBorderWidth": 1,
+    },
+  },
+]
+`;
+
+exports[`e2e fixture theme contract > keeps the label formatters unchanged 1`] = `
+{
+  "element": "ALICE",
+  "event": "» $1,200",
+  "eventWithoutLabel": "» ev-1",
+  "unlabelled": "BOB",
+}
+`;

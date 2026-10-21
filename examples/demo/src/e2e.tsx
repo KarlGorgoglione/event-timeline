@@ -1,10 +1,10 @@
 // End-to-end fixture page (DESIGN.md §14; audit T-10).
 //
-// A full-viewport <Timeline> with no customization panel. The Playwright
-// specs configure it through the URL (`?renderer=…&dataset=…`) and the
-// `window.__e2e` API rather than by clicking demo controls, so reworking the
-// demo can't break them. The status strip under the timeline carries the same
-// test ids as the demo's.
+// A full-viewport <Timeline> with no demo UI. The Playwright specs configure
+// it through the URL (`?renderer=…&dataset=…`) and the `window.__e2e` API
+// rather than by clicking demo controls, so reworking the demo can't break
+// them. Its presets and data hooks live in `e2e/fixtureTheme.ts`, pinned by a
+// snapshot; the status strip carries the test ids the specs read.
 
 import {
   StrictMode,
@@ -26,13 +26,13 @@ import {
 import { demoData } from './fixture';
 import { makeAmlScenario } from './scenario';
 import { makeSynthetic, type DemoDatum } from './synthetic';
-import type { DatasetKey } from './panel/config';
-import { PRESETS } from './panel/config';
 import {
+  PRESETS,
   buildFormatters,
   buildResolvers,
   buildTheme,
-} from './panel/buildProps';
+  type DatasetKey,
+} from './e2e/fixtureTheme';
 
 export interface E2EApi {
   setDataset(name: DatasetKey): void;
