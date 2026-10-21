@@ -96,10 +96,15 @@ export function buildElements<TData>(
     const width = input.measure(text, style.labelFont);
     const iconSize = style.iconSize;
     if (element.icon !== undefined) {
+      // The icon over its centred label make one block, as wide as the wider
+      // of the two (the width the fit inset reserves). It ends `markerGap`
+      // before the line and, sticky, starts at `edgePadding`: a label wider
+      // than its icon is never cut off by the edge or drawn over the line.
       const halfW = iconSize / 2;
+      const halfBlock = markerContentWidth(width, iconSize, true) / 2;
       const centerX = Math.max(
-        x1 - markerGap - halfW,
-        theme.layout.edgePadding + halfW,
+        x1 - markerGap - halfBlock,
+        theme.layout.edgePadding + halfBlock,
       );
       const totalH = iconSize + STACK_GAP_PX + font.px;
       const top = rowCenterY - totalH / 2;
