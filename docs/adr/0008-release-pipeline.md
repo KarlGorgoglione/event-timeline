@@ -32,3 +32,6 @@ pnpm 11 has an open bug publishing with OIDC (pnpm/pnpm#11513).
 - Publishing works only from this workflow on main (the Trusted Publisher on
   npmjs.com names `release.yml`).
 - Action and npm upgrades are explicit edits to the pinned SHAs and version.
+- CI holds no write permissions. Deploying the demo is a workflow of its own
+  (`pages.yml`, also after CI passes), so a GitHub Pages outage can't fail CI
+  and block a release.
