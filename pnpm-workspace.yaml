@@ -6,3 +6,9 @@ packages:
 # binary; pnpm blocks dependency build scripts by default.
 allowBuilds:
   esbuild: true
+
+# Peer dependencies: install missing ones, and fail on conflicts instead of
+# warning. (Kept here rather than in .npmrc, which npm also reads and warns
+# about.)
+autoInstallPeers: true
+strictPeerDependencies: true
