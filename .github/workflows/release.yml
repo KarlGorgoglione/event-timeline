@@ -184,7 +184,9 @@ jobs:
         run: |
           while read -r name version tarball dir; do
             echo "Publishing $name@$version"
-            npm publish "release/$tarball" --provenance --access public
+            # "./" makes it a file spec: "release/x.tgz" alone reads as a
+            # GitHub owner/repo shorthand.
+            npm publish "./release/$tarball" --provenance --access public
             tag="$name@$version"
             notes=$(awk -v ver="## $version" '
               $0 == ver { f = 1; next }
