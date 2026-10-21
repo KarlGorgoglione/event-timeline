@@ -131,6 +131,29 @@ describe('element icons (§1, A-07)', () => {
     expect(out.iconCount).toBe(0);
   });
 
+  // The test measure is 6 px a character: 'Edge CDN' is 48 px, wider than
+  // the 16 px icon, so the marker block is 48 px wide.
+  const wide = { label: 'Edge CDN', icon: {} as CanvasImageSource };
+
+  it('ends a marker wider than its icon markerGap before the line', () => {
+    const { out } = testFrame(line(100, 500, wide), {
+      resolveIcon: { kind: 'image', image: wide.icon },
+    });
+    // block right edge = 88 − gap 8 = 80, so its centre is 80 − 48/2 = 56.
+    expect(elementLabels(out)[0]).toMatchObject({ x: 56, align: 'center' });
+    expect(out.icons[0]).toMatchObject({ x: 56 - iconSize / 2 });
+  });
+
+  it('keeps a sticky marker wider than its icon inside the left edge', () => {
+    const { out } = testFrame(line(-1000, 1000, wide), {
+      resolveIcon: { kind: 'image', image: wide.icon },
+    });
+    const { edgePadding } = defaultTheme.layout;
+    // block left edge = edgePadding, so the centred label starts there.
+    expect(elementLabels(out)[0]).toMatchObject({ x: edgePadding + 24 });
+    expect(out.icons[0]).toMatchObject({ x: edgePadding + 24 - iconSize / 2 });
+  });
+
   it('keeps the icon slot while a URL icon loads, so the label does not jump', () => {
     const { out } = testFrame(line(100, 500, { icon: 'https://x/i.png' }));
     expect(out.iconCount).toBe(0);
