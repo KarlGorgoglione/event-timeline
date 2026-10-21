@@ -1,50 +1,110 @@
 name: Release
 
-# Publishes the packages via Changesets (DESIGN.md §15, Phase 8) using npm
-# **Trusted Publishing (OIDC)** — no long-lived NPM_TOKEN. On a push to main the
-# Changesets action opens/updates a "Version Packages" PR that applies pending
-# changesets; merging that PR re-runs this workflow with no changesets left, so
-# the publish step runs and uploads to npm via a short-lived OIDC credential.
+# Publishes the packages via Changesets using npm Trusted Publishing (OIDC) —
+# no long-lived NPM_TOKEN. It runs only after CI passed on a push to main
+# (audit T-04), on the exact commit CI verified, in three jobs so the
+# credentials never meet third-party install scripts (audit T-03):
+#
+#   1. version  — with pending changesets, opens/updates the "Version Packages"
+#                 PR. Installs without running any package scripts.
+#   2. build    — once that PR is merged (no changesets left): builds and packs
+#                 every package whose version isn't on npm yet. No write
+#                 permissions and no credentials.
+#   3. publish  — uploads those tarballs with npm via a short-lived OIDC
+#                 credential and creates their GitHub Releases. Runs no
+#                 install at all; only a pinned npm.
 #
 # Requirements (see https://docs.npmjs.com/trusted-publishers/):
-#   - `id-token: write` permission (below) so GitHub can mint the OIDC token.
-#   - npm CLI >= 11.5.1 and Node >= 22.14.0 (we upgrade npm explicitly).
+#   - `id-token: write` (publish job only) so GitHub can mint the OIDC token.
+#   - npm CLI >= 11.5.1 and Node >= 22.14.0 (npm is pinned below).
 #   - A Trusted Publisher configured on npmjs.com for each package (owner
 #     KarlGorgoglione, repo event-timeline, workflow release.yml).
 #   - NO npm auth token anywhere (an empty/real token in the env or .npmrc makes
 #     npm try the token instead of OIDC), so we deliberately set none.
 #
-# We publish with `npm publish` rather than `changeset publish`: changesets shells
-# out to the detected package manager (pnpm here), and pnpm 11.x has an open OIDC
-# publish bug (pnpm/pnpm#11513, fix #11526 unreleased). npm's OIDC path is solid,
-# so Changesets handles only versioning and we do the upload with npm directly.
-# The tarball is built with `pnpm pack` first, though: only pnpm rewrites
-# `workspace:` dependency ranges to real semver versions, and npm would upload
-# the manifest verbatim — making the package uninstallable outside pnpm.
+# We publish with `npm publish` rather than `changeset publish`: changesets
+# shells out to pnpm, and pnpm 11.x has an open OIDC publish bug
+# (pnpm/pnpm#11513). The tarballs are packed with `pnpm pack`, though: only
+# pnpm rewrites `workspace:` dependency ranges to real semver versions.
+#
+# Actions are pinned by commit SHA (tag in the trailing comment).
+
 on:
-  push:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
     branches: [main]
 
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
-permissions:
-  contents: write
-  pull-requests: write
-  id-token: write
+# Each job asks for exactly what it needs.
+permissions: {}
+
+env:
+  NPM_VERSION: 11.21.1
 
 jobs:
-  release:
+  version:
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the changeset-release/main branch
+      pull-requests: write # open/update the Version Packages PR
+    outputs:
+      hasChangesets: ${{ steps.changesets.outputs.hasChangesets }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      # Only @changesets/cli is needed here: no package scripts run while the
+      # job holds write access.
+      - name: Install dependencies (no scripts)
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      # With changesets pending this opens/updates the "Version Packages" PR and
+      # reports hasChangesets=true. With none pending — that PR was just merged
+      # — it does nothing and the build and publish jobs run.
+      - name: Create Version Packages PR
+        id: changesets
+        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d # v1.9.0
+        with:
+          version: pnpm run version-packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build:
+    needs: version
+    if: needs.version.outputs.hasChangesets == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      count: ${{ steps.pack.outputs.count }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: pnpm
@@ -52,37 +112,16 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      # Trusted Publishing needs npm >= 11.5.1; Node 22 ships npm 10.x.
-      - name: Update npm for OIDC trusted publishing
-        run: npm install -g npm@latest
+      - name: Build packages
+        run: pnpm build
 
-      # When changesets are pending this opens/updates the "Version Packages" PR
-      # (and does not publish). When none are pending — i.e. that PR was just
-      # merged — it does nothing and the publish step below runs.
-      - name: Create Version Packages PR
-        id: changesets
-        uses: changesets/action@v1
-        with:
-          version: pnpm run version-packages
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # Publish any package whose version isn't on npm yet, via OIDC (no token).
-      # Provenance is attested from this workflow's OIDC identity. Idempotent:
-      # already-published versions are skipped, so re-runs are safe. For each
-      # freshly published version we also create a matching GitHub Release, with
-      # notes lifted from that version's CHANGELOG.md section (the tags are
-      # lightweight, so --notes-from-tag isn't an option). GH_TOKEN uses the
-      # built-in GITHUB_TOKEN (the job already has contents: write).
-      - name: Publish to npm (OIDC trusted publishing)
-        if: steps.changesets.outputs.hasChangesets == 'false'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Pack every public package whose version isn't on npm yet, recording
+      # "<name> <version> <tarball> <dir>" per package in manifest.txt.
+      - name: Pack unpublished packages
+        id: pack
         run: |
-          pnpm --filter "./packages/*" run build
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          published=0
+          mkdir -p release
+          count=0
           for dir in packages/*/; do
             name=$(node -p "require('./${dir}package.json').name")
             version=$(node -p "require('./${dir}package.json').version")
@@ -92,25 +131,69 @@ jobs:
               echo "$name@$version already published — skipping"
               continue
             fi
+            tarball=$( cd "$dir" && pnpm pack --pack-destination "$GITHUB_WORKSPACE/release" | tail -n 1 )
+            echo "$name $version $(basename "$tarball") $dir" >> release/manifest.txt
+            count=$((count + 1))
+          done
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Upload tarballs
+        if: steps.pack.outputs.count != '0'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-tarballs
+          path: release/
+          retention-days: 7
+
+  publish:
+    needs: build
+    if: needs.build.outputs.count != '0'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create tags and GitHub Releases
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    steps:
+      # Only for the CHANGELOGs (release notes); nothing is installed or run.
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+
+      # Trusted Publishing needs npm >= 11.5.1; Node 22 ships npm 10.x.
+      - name: Install npm ${{ env.NPM_VERSION }}
+        run: npm install -g "npm@$NPM_VERSION"
+
+      - name: Download tarballs
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-tarballs
+          path: release
+
+      # Publish via OIDC (no token), with provenance attested from this
+      # workflow's identity, then create a GitHub Release (and its tag) at the
+      # released commit, with notes from that version's CHANGELOG section.
+      - name: Publish to npm (OIDC trusted publishing)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          while read -r name version tarball dir; do
             echo "Publishing $name@$version"
-            # Pack with pnpm so `workspace:` dependency ranges are rewritten to
-            # real semver versions in the tarball manifest (raw `npm publish`
-            # uploads them verbatim, breaking installs from npm/yarn/bun), then
-            # upload with npm so OIDC trusted publishing still applies.
-            tarball=$( cd "$dir" && pnpm pack --pack-destination "$RUNNER_TEMP" | tail -n 1 )
-            npm publish "$tarball" --provenance --access public
+            npm publish "release/$tarball" --provenance --access public
             tag="$name@$version"
-            git tag "$tag"
-            git push origin "refs/tags/$tag"
-            # Extract this version's section from the package CHANGELOG: the lines
-            # between "## <version>" and the next "## " heading.
             notes=$(awk -v ver="## $version" '
               $0 == ver { f = 1; next }
               f && /^## / { exit }
               f { print }
             ' "${dir}CHANGELOG.md")
             gh release create "$tag" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$SHA" \
               --title "$tag" \
               --notes "${notes:-$tag}"
-            published=1
-          done
+          done < release/manifest.txt

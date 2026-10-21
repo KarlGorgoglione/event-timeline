@@ -1,68 +1,85 @@
 # @event-timeline/react
 
-React binding for [`@event-timeline/core`](https://www.npmjs.com/package/@event-timeline/core)
-— a Canvas-based, domain-agnostic timeline that renders **elements** (horizontal
-lanes) and **events** (directed arrows) and stays smooth at large scale.
+React binding for
+[`@event-timeline/core`](https://www.npmjs.com/package/@event-timeline/core):
+a timeline that renders **elements** (horizontal lanes) and **events**
+(directed arrows) and stays at 60 fps with 50,000 events.
 
-A thin binding: it owns the two `<canvas>` layers, the `ResizeObserver`, and the
-HTML tooltip overlay, and syncs props to the engine imperatively so React stays
-out of the render loop. See
+The binding mounts one engine into its container and keeps React out of the
+render loop: props are applied to the engine imperatively, and the hover
+tooltip is positioned without re-rendering. Contract:
 [`docs/DESIGN.md`](https://github.com/KarlGorgoglione/event-timeline/blob/main/docs/DESIGN.md)
-§12 for the contract.
+§12.
 
 ## Install
 
 ```bash
-pnpm add @event-timeline/react @event-timeline/core react react-dom
+pnpm add @event-timeline/react
 ```
 
-`react` and `react-dom` are **peer dependencies** (`>=18`, i.e. React 18 & 19).
+`react` and `react-dom` (`>=18`) are peer dependencies. The engine,
+`@event-timeline/core`, comes with the binding, which re-exports its types,
+strategies and `defaultTheme`: import everything from `@event-timeline/react`,
+and don't add core separately (two versions would bundle two engines).
 
 ## Usage
 
 ```tsx
-import { useMemo, useRef } from 'react';
-import { Timeline, type TimelineHandle } from '@event-timeline/react';
+import { useRef } from 'react';
+import {
+  Timeline,
+  type TimelineData,
+  type TimelineHandle,
+} from '@event-timeline/react';
 
-function MyTimeline({ elements, events }) {
-  const ref = useRef<TimelineHandle>(null);
-
-  // Memoize props by reference — the binding diffs them and re-applies only on
-  // change (passing fresh inline objects each render re-runs setData; §12).
-  const data = useMemo(() => ({ elements, events }), [elements, events]);
-
+function MyTimeline({ data }: { data: TimelineData<MyData> }) {
+  const ref = useRef<TimelineHandle<MyData>>(null);
   return (
-    <Timeline
+    <Timeline<MyData>
       ref={ref}
       data={data}
+      // Inline objects are fine: options, theme, styleResolvers and formatters
+      // are compared field by field, and only real changes reach the engine.
       options={{ multiSelect: true }}
+      theme={{ header: { height: 52 } }}
       onHover={(hit) => {
-        /* typed discriminated union: element | event | cluster | null */
+        /* element | event | cluster | null, with your typed `data` */
       }}
-      onSelectionChange={(ids) => {}}
-      style={{ width: '100%', height: 480 }}
+      onSelectionChange={({ elements, events }) => {}}
+      style={{ height: 480 }}
     />
   );
 }
 ```
 
+`data` is compared by reference: a new object calls `setData` (a full reload),
+so keep it stable between renders (from state, a query cache, or `useMemo`).
+Functions inside `options`, `styleResolvers` and `formatters` are compared by
+reference too; a new function triggers a redraw.
+
 ### Imperative handle
 
-The `ref` exposes camera and streaming controls (§12): `fit()`, `panToTime(t)`,
-`zoomToRange(start, end)`, `select(ids)`, `getViewport()`, `resize(w, h, dpr)`,
-and the live-update methods `setData` / `addEvents` / `removeEvents` /
-`addElements` / `updateElement`. For high-frequency streams, call these directly
-to bypass React reconciliation and get incremental index updates.
+The `ref` exposes the camera (`fit`, `panToTime`, `zoomToRange`, `zoomIn`,
+`zoomOut`, `setScrollY`, `scrollToElement`, `revealEvent`), the selection
+(`select`, `getSelection`, `clearSelection`), the data (`setData`, `getData`,
+`addEvents`, `removeEvents`, `updateEvent`, `addElements`, `removeElements`,
+`updateElement`), `getViewport`, `getRendererBackend`, `version` and the
+`engine` itself. For high-frequency streams, call `addEvents` on the handle
+rather than rebuilding `data`.
 
 ### Props
 
-Every engine event has a matching `on*` callback prop (`onHover`, `onClick`,
-`onSelectionChange`, `onViewportChange`, `onDataChange`, `onReady`). Customise
-via `theme` (`Partial<Theme>`), `styleResolvers`, `formatters`, and `options`
-(`layout`, `clustering`, `lod`, `multiSelect`, `streamingLayout`,
-`onDiagnostic`, `onFrameStats`, …). The component is generic — `Timeline<TData>`
-threads your opaque `data` payload back through every callback. It is
-StrictMode-safe and SSR-safe (the engine is created in an effect).
+Every engine event has a callback prop: `onHover`, `onClick`,
+`onSelectionChange`, `onViewportChange` (at most once per frame),
+`onDataChange`, `onReady` and `onFirstFrame`. `options` accepts every engine
+option (`renderer`, `layout`, `clustering`, `lod`, `labels`, `arrows`, `zoom`,
+`pan`, `keyboard`, `locale`, `onDiagnostic`, `onFrameStats`, …). The default
+tooltip shows the formatted label (and a member list for clusters) in the
+theme's colours and flips at the viewport edges; pass `renderTooltip` to
+customise it, return `null` from it to skip a hit, or set `tooltip={false}`.
+
+The component is StrictMode-safe and SSR-safe (the engine is created in an
+effect).
 
 ## License
 

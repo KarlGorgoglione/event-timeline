@@ -1,954 +1,546 @@
-# Canvas Timeline Library — Technical Design Document
+# event-timeline — Design Specification
+
+This is the living specification of the library: what it does and the rules
+the code keeps. It describes the current behaviour only. Why a decision was
+taken lives in the decision records ([`docs/adr/`](adr/README.md)); how the
+library got here lives in [`docs/HISTORY.md`](HISTORY.md) and the package
+changelogs. Code comments cite this document by section (`§5`), so section
+numbers are stable: a section that no longer applies keeps its number and says
+so.
 
 ## Context
 
-This repository is an empty folder destined to become a **Canvas-based timeline
-React library**, inspired by `vis-timeline`. The motivating use case (a bank
-visualising the flow of money over time between clients, counterparties and cash
-accounts) is only an *example*: the library itself must be **generic and
-domain-agnostic**. It knows nothing about money, transactions, or banking. It
+A Canvas-based, domain-agnostic timeline for the web, with a React binding. It
 knows two things:
 
-- **Elements** — entities drawn as horizontal *lines* (lanes) stacked
-  vertically. (In the bank example: a client, a counterparty, or a "Cash" entity.)
-- **Events** — directed connectors drawn as *arrows* between two elements at a
-  point in time, optionally labelled. (In the bank example: a transfer of money
-  from one entity to another on a given date.)
+- **Elements**: entities drawn as horizontal _lines_ (lanes), stacked
+  vertically.
+- **Events**: directed connectors drawn as _arrows_ between two elements at a
+  point in time, optionally labelled.
 
-Time runs horizontally; elements stack vertically. The host application fetches
-and filters the data (out of scope) and hands the engine a clean
-`{ elements, events }` dataset to render. The goal of *this* document is to fully
-specify the architecture so development can proceed in well-defined phases.
+Time runs horizontally; elements stack vertically. The host fetches and filters
+the data and hands the engine `{ elements, events }`. The motivating example (a
+bank following money between clients, counterparties and cash) is only an
+example: the library never interprets the data.
 
-### Why Canvas
-
-Datasets are large (design target: **~50,000 events across ~1,000s of element
-lines**). DOM/SVG cannot sustain interactive pan/zoom at that scale. Canvas 2D
-gives us full control over a virtualised, culled render loop while keeping text,
-hit-testing and debugging far simpler than WebGL. The renderer sits behind an
-interface so a WebGL backend can be added later without rewriting the engine.
-
-### Decisions locked in during brainstorming
-
-| Decision | Choice |
-| --- | --- |
-| Rendering | **Canvas 2D** behind a swappable `Renderer` interface, plus a **WebGL2** backend auto-selected when hardware-accelerated (§16 notes) |
-| Scale target | **~50k events / 1000s of lines**, smooth at 60fps |
-| Packaging | **Agnostic TS core** + **thin React wrapper** (monorepo) |
-| Time granularity | **Date-level** (day is finest); zoom decade→year→month→day |
-| Arrow routing | **Orthogonal** (right-angle riser) by default |
-| Cash / external flows | **No special handling** — host supplies them as ordinary elements |
-| v1 interactions | Pan, zoom, **hover tooltips/highlight**, **click & selection**, **live/streaming updates**, **event collapsing/aggregation**, **auto-layout ordering** |
-| Out of scope (v1) | Drag-to-reorder rows, duration/range items, accessibility tree |
+| Aspect           | Choice                                                                                |
+| ---------------- | ------------------------------------------------------------------------------------- |
+| Rendering        | Instanced **WebGL2** on capable hardware, **Canvas2D** otherwise, behind one seam (§4) |
+| Scale target     | 50,000 events over thousands of lines at 60 fps (§13, Gate 2)                          |
+| Packaging        | Framework-free TypeScript engine + thin React binding                                 |
+| Time granularity | Milliseconds; header ticks from years down to minutes (§8)                            |
+| Arrow routing    | Orthogonal: a vertical riser at the event's time                                      |
+| Out of scope     | Drag-to-reorder rows, duration bars, an accessibility tree mirroring the canvas       |
 
 ---
 
 ## 1. Domain Model
 
-The core vocabulary is intentionally generic.
-
 ```ts
-// A continuous timestamp in ms since the Unix epoch (UTC). "Date-level" is a
-// display concern, not storage. All calendar interpretation — day boundaries,
-// tick labels, day-clustering — is done in **UTC** (see §8). Storage is always ms.
-type Time = number;
+type Time = number; // ms since the Unix epoch, interpreted in UTC (§8)
 
-// The host payload type `TData` is threaded through the whole public API
-// (`TimelineEvent<TData>` → `Timeline<TData>` → `onHover(p: HitResult<TData>)`),
-// so callbacks hand back a typed `data` instead of `unknown`. It defaults to
-// `unknown`, so consumers that don't care pay nothing and the old behaviour is
-// preserved. The engine still never *interprets* `data`; the generic only
-// improves type-safety at the boundary.
 interface TimelineElement<TData = unknown> {
   id: string;
-  label: string;
-  icon?: string | HTMLImageElement; // URL, emoji, or preloaded image
-  // optional per-element style overrides; merged over theme
-  style?: Partial<ElementStyle>;
-  // explicit ordering hint; honoured only by the `explicit` layout strategy
-  // (§7), ignored by `byFirstEvent` and `barycenter`.
-  order?: number;
-  data?: TData; // opaque host payload, echoed back verbatim in callbacks
+  label?: string; // the id is shown when omitted
+  icon?: string | CanvasImageSource; // URL, emoji/glyph, or an image source
+  style?: Partial<ElementStyle>; // per-item override (§11)
+  order?: number; // honoured by the `explicit` layout only (§7)
+  data?: TData; // opaque, echoed back in callbacks
 }
 
 interface TimelineEvent<TData = unknown> {
   id: string;
-  sourceId: string;   // element the arrow leaves
-  targetId: string;   // element the arrow enters (arrowhead here)
-  time: Time;         // the moment the event occurs
-  label?: string;     // e.g. "$5,000 · 2026-03-04"
+  sourceId: string; // the arrow leaves this element (source dot)
+  targetId: string; // and enters this one (arrowhead)
+  time: Time;
+  endTime?: Time; // reserved for durations: validated, not drawn yet
+  label?: string;
   style?: Partial<EventStyle>;
   data?: TData;
 }
 
 interface TimelineData<TData = unknown> {
-  elements: TimelineElement<TData>[];
-  events: TimelineEvent<TData>[];
+  elements: readonly TimelineElement<TData>[];
+  events: readonly TimelineEvent<TData>[];
 }
 ```
 
-Notes:
-- An **element line** spans from a small padding *before its first event* to its
-  *last event* (computed extent). Elements with no events have zero extent and
-  are not drawn by default (configurable to draw a stub). Because the default
-  layout orders by first-event time (§7), event-less elements have no natural
-  ordering key: they sort **after** all elements that have events, in stable
-  input order, and only appear when stub-drawing is enabled.
-- The element's **label + icon** are anchored at the *start of its line* in world
-  space (so they pan with the content), per the brief. Enhancement: when the
-  line start scrolls off the left edge while the line is still visible, the label
-  "sticks" to the left edge so it stays readable.
-- Direction matters: the arrowhead is drawn at `targetId`. A small node dot marks
-  `sourceId`.
-- The engine never interprets `data`; it is opaque and returned verbatim in
-  interaction callbacks.
+- An element's **line** runs from a short lead before its first event to its
+  last event. An element without events has no line: by default it gets no row
+  (`emptyElements: 'hide'`); with `'show'` it keeps a row with its label only.
+- The element's **start marker** (icon above label) sits just left of the line
+  start and pans with the content. When the line start scrolls off the left
+  edge, the marker sticks to the edge.
+- An event's arrowhead is drawn at `targetId`; a dot marks `sourceId` (and,
+  with `arrows.targetDot`, the landing point). A **self-event**
+  (`sourceId === targetId`) is drawn as a small loop on its own line.
+- Where a riser crosses another element's line, a small semicircular **hop**
+  bridges it. `arrows.hops: 'auto'` (default) draws hops while a frame would
+  draw at most `arrows.hopBudget` crossings (400) and drops them in denser
+  views; `true`/`false` force them. Risers sharing a pixel column are nudged
+  apart by `arrows.subLaneStep` px, up to `arrows.subLaneMax` steps.
+- `TData` is threaded through the whole API so callbacks return a typed `data`.
 
-### Data validation policy
+### Data validation
 
-At the design scale (50k machine-generated events) malformed input is expected.
-Validation runs on every ingest (`setData`, `addEvents`, `addElements`) and is
-**lenient by default**: invalid items are dropped, never thrown, so one bad row
-never rejects a whole batch or breaks a live stream. Drops are reported through
-an injectable diagnostics sink — `options.onDiagnostic?: (d: Diagnostic) => void`
-— rather than a hard-coded `console`, so the core stays decoupled from any
-logging implementation and the behaviour is unit-testable (DIP). When no sink is
-supplied, the default sink forwards to `console.warn` in development builds
-(`process.env.NODE_ENV !== 'production'`) — with the offending id(s), reason, and
-a per-ingest summary count — and is a no-op in production. An item is invalid if:
+Validation runs on every ingest (`setData`, `addEvents`, `addElements`,
+`updateEvent`, `updateElement`) and is **lenient**: an invalid item is dropped,
+never thrown, so one bad row cannot reject a batch or break a stream. Each drop
+is reported to the `onDiagnostic` sink with a code, the subject and a reason.
+Without a sink, a default one batches the reports of one ingest into a single
+console summary in development and stays silent in production.
 
-- `time` is not a finite number (`NaN`/`±Infinity`/non-number);
-- `sourceId` or `targetId` references an element id not present in the dataset
-  (dangling edge);
-- its `id` duplicates one already present (the later item is dropped; ids must be
-  unique within `elements` and within `events` respectively).
-
-Self-directed events (`sourceId === targetId`) are **valid** and rendered as a
-small self-loop glyph on the element's own line (no inter-row riser).
+Dropped or reported: a missing or non-string `id`; a duplicate `id` (the later
+one); a non-string `label`; a non-finite `order`; a non-finite `time`; an
+`endTime` that is not a finite time ≥ `time`; an event whose `sourceId` or
+`targetId` names no element; a theme font not sized in `px` (§3); a layout
+strategy result that misses or repeats ids (§7). The store copies what it
+indexes (time, endpoints, style slot), so mutating an event object after
+ingest cannot corrupt the index.
 
 ---
 
-## 2. Package & Repository Architecture
-
-A pnpm monorepo with a strict separation between the framework-agnostic engine
-and the React binding.
+## 2. Packages and Boundaries
 
 ```
-event-timeline/
-├─ packages/
-│  ├─ core/            @event-timeline/core   — pure TS, zero React, zero DOM-framework deps
-│  │  └─ src/
-│  │     ├─ model/        domain types, dataset store, indexes
-│  │     ├─ scale/        time scale, camera, tick generation
-│  │     ├─ layout/       vertical ordering strategies, extents
-│  │     ├─ index/        spatial/temporal indexes + clustering
-│  │     ├─ render/       Renderer interface, Canvas2DRenderer, layers
-│  │     ├─ interaction/  pointer state machine, hit-testing
-│  │     ├─ engine/       composition root, split by responsibility (SRP):
-│  │     │                  Timeline      — thin facade / public API only
-│  │     │                  FrameScheduler — rAF + per-layer dirty flags
-│  │     │                  TypedEmitter   — typed pub/sub for engine events
-│  │     │                  IndexStore     — single owner of all derived indexes
-│  │     └─ index.ts
-│  └─ react/           @event-timeline/react  — <Timeline/>, hooks, overlays
-│     └─ src/
-│        ├─ Timeline.tsx
-│        ├─ useTimeline.ts
-│        ├─ Tooltip.tsx   (HTML overlay via portal)
-│        └─ index.ts
-├─ examples/
-│  └─ demo/            Vite + React playground with synthetic 50k dataset
-├─ package.json (workspaces)
-├─ pnpm-workspace.yaml
-├─ tsconfig.base.json
-└─ docs/DESIGN.md      (this document)
+packages/core   @event-timeline/core   engine: framework-free TypeScript
+packages/react  @event-timeline/react  <Timeline/>, useTimeline, Tooltip
+examples/demo   Vite playground, perf harness (bench.html), e2e fixture (e2e.html)
 ```
 
-`@event-timeline/core` is handed a `<canvas>` element and consumes its DOM
-pointer/wheel events directly; it does **not** attach a `ResizeObserver` or
-assume any framework — size changes arrive through an imperative
-`engine.resize(cssWidth, cssHeight, dpr)` call that the host (the React layer, or
-any other embedder) drives (see §12). It does **not** import React. The single
-runtime dependency is **`date-fns`** for calendar arithmetic (variable-length
-months/years for UTC tick generation, §8); to stay tree-shakeable it is always
-imported per-function (`import { addDays } from 'date-fns'`), never
-`import * as`. Everything else is dependency-free.
+`@event-timeline/core` has **no runtime dependencies** and never imports React
+(enforced by lint). Its modules:
 
-`@event-timeline/react` declares React as a **peer dependency**, `react`/`react-dom`
-`">=18"` (React 18 and 19), and assumes the automatic JSX runtime.
+| Module         | Owns                                                                               |
+| -------------- | ---------------------------------------------------------------------------------- |
+| `model/`       | Types, the typed-array `DataStore`, validation and diagnostics, time units         |
+| `scale/`       | `Camera` (the only time↔screen math, §3), fit and zoom bounds, tick generation    |
+| `layout/`      | Ordering strategies, normalisation, stable append, row positions (§7)              |
+| `cluster/`     | Cluster strategies and run building (§6)                                           |
+| `scene/`       | The frame builder: typed batches and hit targets per frame, aggregates (§4–§6)    |
+| `render/`      | The `Renderer` seam, Canvas2D and WebGL2 backends, backend selection (§4)          |
+| `interaction/` | Pointer, wheel and keyboard translation, hit-testing, selection (§9)               |
+| `engine/`      | `TimelineEngine` facade, options, view model, painters, scheduler, surface         |
 
-Build: **tsup** (ESM + CJS + `.d.ts`), TS project references, `vitest` for unit
-tests, `@playwright/test` for visual/golden + perf tests, ESLint + Prettier,
-Changesets for versioning.
+The engine owns its DOM surface: `engine.mount(container)` creates a wrapper
+with two canvases inside the host element, and `unmount()` removes it. With
+`mount(container, { autoResize: true })` (the default) it follows the wrapper's
+size and the device pixel ratio itself; with `autoResize: false` the host calls
+`engine.resize(cssWidth, cssHeight, dpr)`. Renderer, frame scheduler and clock
+are injectable (`renderer`, `scheduler`, `now`), which is how the tests run the
+engine headless.
 
-**Bundle-size budgets** (gzipped, tracked in CI alongside the perf budgets of
-§13): `@event-timeline/core` ≤ 30 KB excluding the tree-shaken `date-fns` functions
-actually used; `@event-timeline/react` ≤ 5 KB on top of core. A size-regression check
-fails the build on overage.
-
-> Toolchain note: Node.js is **not currently installed** in this environment.
-> Phase 0 must install Node (≥20) and pnpm before anything else.
+`@event-timeline/react` depends on core and re-exports what React apps need
+(types, strategies, `defaultTheme`), so apps install only the binding; React
+(`>=18`) is a peer dependency.
+Both packages build with tsup (ESM + CJS + `.d.ts`), are `sideEffects: false`,
+and type-check independently (no TS project references; see ADR 0007).
+Bundle budgets (minified and brotli-compressed, checked in CI by size-limit):
+core ≤ 36 KB, react ≤ 5 KB on top of core. Core measures about 32 KB, of which
+the WebGL2 backend is about 5 KB.
 
 ---
 
-## 3. Coordinate System & Camera
+## 3. Coordinate System and Camera
 
-Two independent axes:
+Horizontal is time: `pxPerMs` _is_ the zoom. Vertical is rows: row `r` is at
+`header.height + r × (rowHeight + rowGap)` minus the scroll offset. There is no
+vertical zoom.
 
-- **Horizontal = time.** `pxPerMs` *is* the horizontal zoom level.
-- **Vertical = element rows.** Row `i` occupies
-  `y = headerHeight + i * rowHeight (+ gaps)`. Row height is fixed; vertical zoom
-  is not supported in v1 (vertical axis is scroll-only).
+The `Camera` holds `{ originTime, pxPerMs, scrollY }`. Pan is anchored in the
+**time domain** (`originTime` is the time at screen x = 0), never as a pixel
+offset, so pan and zoom compose without drift. Zoom is about the cursor: the
+time under the pointer is captured before `pxPerMs` changes and `originTime` is
+recomputed so the same time stays under the pointer.
 
-The horizontal pan is stored as a **time anchor**, not as a pixel offset, so that
-pan and zoom compose cleanly and panning is zoom-independent. A **Camera** holds
-`{ originTime, scrollY, pxPerMs }`, where `originTime` is the time mapped to the
-left edge of the viewport (screen x = 0). Screen↔world transforms:
+**Single source of coordinate truth.** All time↔screen arithmetic lives in
+`scale/` and is reached through `Camera` helpers: `timeToScreenX`,
+`screenXToTime`, `durationToPx`, `pxToDuration`, `placeTimeAt`,
+`rowToScreenY`, `screenYToRow`. Lint rejects `*` or `/` on `pxPerMs` anywhere
+else.
 
-```
-screenX = (t - originTime) * pxPerMs         // time → screen x
-t       = originTime + screenX / pxPerMs      // screen x → time (used by hit-test)
-screenY = worldY - scrollY                    // worldY = headerHeight + row*rowHeight
-```
+**Zoom and pan limits.** `zoom.min` defaults to `'fit'` (the whole dataset);
+`zoom.max` defaults to 20 px per minute. `pan.bounds: 'data'` keeps the view
+over the data; the default `'none'` pans freely. `fitOnDataChange` decides when
+`setData` reframes: `'auto'` (the first dataset, and any later one outside the
+view), `'always'`, `'first'` or `'never'`. Fitting reserves a left inset
+measured from the actual start markers, so labels are not clipped.
 
-There is deliberately no separate "world-x in pixels" stored on the camera:
-because world width (`extent * pxPerMs`) rescales on zoom, a stored pixel offset
-would not be zoom-invariant. Anchoring pan in the time domain avoids that class
-of bug.
+### 3.1 Degenerate extents
 
-Zoom is performed *about the cursor*: the time under the pointer, `tCursor =
-originTime + cursorScreenX / pxPerMs`, is computed **before** changing
-`pxPerMs`, then `originTime` is recomputed afterwards so the same `tCursor` lands
-under the same screen x (`originTime = tCursor - cursorScreenX / pxPerMs`). Zoom
-is clamped to `[minPxPerMs, maxPxPerMs]`, where `maxPxPerMs` comes from a max
-useful day-width and `minPxPerMs` from fitting the data extent to the viewport
-(see §3.1 for degenerate extents).
+With no events, the view shows a 30-day window centred on `now()`; with a
+single instant, a 30-day window centred on it. No division by a zero span ever
+reaches the scale math.
 
-### 3.1 Degenerate extents (empty / single-instant data)
-
-`minPxPerMs` and `fit()` derive from the data extent `[minTime, maxTime]`. When
-the dataset is empty or collapses to a single instant (`maxTime - minTime === 0`,
-or fewer than two distinct times), there is no finite extent to fit:
-
-- **Empty dataset**: render the header + background only (empty state), with
-  `pxPerMs` defaulted so a configurable default window (default: 30 days) spans
-  the viewport, centred on "today" (host-overridable via `fit`/`zoomToRange`).
-- **Single instant / zero extent**: treat the extent as a default window (again
-  30 days) centred on that instant, so `minPxPerMs` is finite and `fit()` is
-  well-defined. No division by zero ever reaches the scale math.
-
-**Single source of coordinate truth (DRY).** The two transforms above live *only*
-on the `Camera`/scale module, exposed as `timeToScreenX`, `screenXToTime`,
-`rowToScreenY`, `screenYToRow` (plus inverse helpers). The renderer, hit-test
-grid, and interaction state machine all call these — none re-derives
-`(t - originTime) * pxPerMs` inline. This keeps zoom-about-cursor, culling, and
-hit-testing provably consistent. As of Phase 1 the rule is upheld by convention
-and review, not a lint rule; a `no-restricted-syntax` guard against raw
-`pxPerMs` arithmetic outside the scale module is tracked in §16.
-
-**Device-pixel-ratio handling.** The backing store is `cssSize * dpr`, but the
-context is **not** pre-scaled (`ctx.scale` is *not* used). Instead the renderer
-works in **device pixels**: coordinates and stroke widths produced by the Camera
-(CSS px) are multiplied by `dpr` and **snapped to integer device pixels** in the
-draw code, with a 0.5px device offset for hairlines. This is the one chosen DPR
-convention — it gives crisp 1px strokes even at fractional DPR (1.5, 2.25), which
-pre-scaling the context cannot guarantee. (The earlier "pre-scale the context"
-phrasing was removed: pre-scaling *and* multiplying by `dpr` would double-scale.)
+**Device pixels.** Backing stores are `cssSize × dpr`; the context is not
+pre-scaled. Builders multiply by `dpr` and snap to integer device pixels, with
+a half-pixel offset for odd stroke widths, so hairlines stay crisp at
+fractional DPRs. Fonts must be sized in `px` (they are scaled the same way);
+others are replaced by the default font and reported.
 
 ---
 
-## 4. Rendering Pipeline
+## 4. Rendering
 
-### Layered canvases
+### Layers
 
-Two stacked `<canvas>` elements (plus the HTML overlay layer for tooltips):
+Two stacked canvases plus the React binding's HTML tooltip:
 
-1. **Base layer** — time header, gridlines, element lines, arrows, labels.
-   Redrawn only when *camera or data* changes (pan, zoom, resize, data update).
-2. **Overlay layer** — hover highlight, selection outlines, crosshair, hovered
-   cluster expansion. Redrawn cheaply (rAF-coalesced; see §9) without touching the
-   expensive base layer.
+1. **Base**: header, gridlines, separators, element lines and markers, arrows,
+   clusters and labels. Redrawn when the camera, data, theme or options change.
+2. **Overlay**: hover and selection highlights, redrawn alone on hover and
+   after every base redraw (so a highlight follows the content). Always
+   Canvas2D: it draws a handful of primitives.
 
-This split is what keeps **hover** at 60fps independent of dataset size: hovering
-touches only the overlay. **Pan and zoom are a different cost class** — they are
-camera changes, so the base layer redraws on every animation frame of the
-gesture, and that redraw is dataset-dependent and bounded by the 16ms base budget
-(§13). The base/overlay split does not make pan size-independent; the culling,
-LOD and clustering of §5–§6 are what keep pan within budget.
+Hover never touches the base layer. Pan and zoom redraw the base on every
+frame of the gesture; §5–§6 keep that bounded.
 
-### The `Renderer` seam (interface contract)
+### Frame pipeline
 
-The swappable-backend promise only holds if the seam is an explicit, backend-free
-interface. `Canvas2DRenderer` is one implementation; a future `WebGLRenderer` must
-be **substitutable without engine changes** (LSP), so the interface exposes only
-primitive drawing verbs in device pixels and leaks no Canvas2D-specific type:
+One base frame is built by `scene/FrameBuilder` into reusable typed buffers,
+then played back to the renderer bottom to top:
+
+1. Visible time window (with a margin) and row band (padded by one row).
+2. Event candidates: by binary search over the sorted times, then the
+   row-interval test (§5); or, zoomed far out, aggregated cells (§6).
+3. Clustering into runs (§6), the hop decision, then emission: arrows,
+   markers and label candidates, with their hit targets.
+4. The label pass places candidates by priority against an occupancy grid,
+   skipping collisions, up to `labels.maxPerFrame` per frame.
+
+Styles are resolved and interned once per item and theme (`StyleTable`), so a
+frame allocates nothing per event. All coordinates are snapped to device
+pixels once, in the builders.
+
+### The `Renderer` seam
+
+Backends implement primitive verbs over typed batches in device pixels; no
+backend type leaks through:
 
 ```ts
 interface Renderer {
+  readonly backend: string; // 'canvas2d', 'webgl', or a custom name
   resize(deviceWidth: number, deviceHeight: number): void;
-  beginFrame(layer: Layer): void;            // clear/prepare a layer
-  // Batched primitives — implementations group by style internally (§ micro-opts).
-  drawLines(batch: LineBatch): void;         // element lines, gridlines, arrow risers
+  beginFrame(clearColor: string | null): void;
+  fillRect(x, y, w, h, color): void;
+  drawRects(batch: RectBatch): void;
+  drawLines(batch: LineBatch): void; // segments, with join flags for polylines
   drawArrowheads(batch: ArrowheadBatch): void;
-  drawNodes(batch: NodeBatch): void;         // source dots, cluster markers
-  drawText(batch: TextBatch): void;          // labels, tick text, "×7" counts
-  drawImages(batch: ImageBatch): void;       // element icons
-  measureText(text: string, font: string): TextMetricsLite; // cached by caller
-  endFrame(layer: Layer): void;
-}
-type Layer = 'base' | 'overlay';
-```
-
-Note `measureText` is part of the contract because layout/LOD need text metrics;
-a WebGL backend supplies its own (e.g. glyph-atlas) measurement. The engine never
-imports `CanvasRenderingContext2D`.
-
-### Render loop
-
-- A single `requestAnimationFrame` scheduler (`FrameScheduler`) with a
-  **dirty-flag** per layer.
-  Nothing redraws unless marked dirty. No continuous repaint.
-- Frame steps for the base layer:
-  1. Compute visible time range `[tStart, tEnd]` and visible row range from the
-     camera + viewport size.
-  2. Query indexes for visible elements and events (Section 5).
-  3. Apply level-of-detail / clustering for the current `pxPerMs` (Section 6).
-  4. Draw in order: background → header/grid → element lines → arrows → event
-     labels → element labels+icons. Element labels are anchored in world space at
-     each line's start (so they pan with the content); when a line's start has
-     scrolled past the left edge while the line is still visible, its label
-     "sticks" to the left edge instead (the sticky-left fallback of §1). There is
-     no separate fixed gutter column — the label is always part of the base
-     layer, drawn last so it sits above lines and arrows.
-
-### Canvas-2D micro-optimisations (enforced in render code)
-
-- **Batch by style**: group strokes/fills sharing a colour/width into a single
-  `beginPath()/stroke()` to minimise context state changes.
-- Cache `measureText` results; cap the number of labels drawn per frame.
-- Reuse scratch objects; avoid per-frame allocation in hot paths.
-- Image/icon cache keyed by URL.
-- Integer-align coordinates; pre-translate by 0.5px for hairlines.
-
----
-
-## 5. Indexing & Virtualisation (for 50k)
-
-All derived indexes are owned by a single `IndexStore` (§2). Crucially, the
-**full-rebuild path (`setData`) and the incremental path (`addEvents`/
-`removeEvents`/…) are the same code**: rebuild is defined as "clear, then apply
-the whole dataset through the incremental insert routine." There is no second,
-parallel index-building implementation to drift out of sync — a common bug when
-incremental and batch paths are written separately (DRY). Extent computation
-likewise lives in one place and is reused by layout, rendering, and mutations.
-Indexes are rebuilt/updated on data change only (not on pan/zoom):
-
-- **Elements**: array + `Map<id, element>`; layout assigns a row index and y.
-- **Element extents**: `Map<id, {minTime, maxTime}>` for line start/end and the
-  "few pixels before first event" padding.
-- **Temporal index for events**: a single array of events **sorted by `time`**.
-  Horizontal culling is a binary search for `[tStart, tEnd]` → O(log n + k),
-  where k = the count whose `time` falls in the visible time range. Vertical
-  culling then drops an event only when the **row interval it spans** — i.e.
-  `[min(sourceRow, targetRow), max(sourceRow, targetRow)]` — does *not* intersect
-  the visible row band. Culling by endpoint rows alone would be a **bug**: an
-  arrow whose source is above the band and target is below it has both endpoints
-  off-screen yet its vertical riser crosses the band and must be drawn.
-- **Per-element event buckets** (`Map<elementId, eventIndex[]>`) to support
-  per-line queries and clustering.
-
-`k` is bounded by the **time** window, not the 2-D viewport — there is no spatial
-(2-D) index in v1. When the time window is narrow (the common interactive case),
-`k` is small and per-frame cost is effectively independent of dataset size. The
-**worst case is full zoom-out** (`fit()` / whole domain visible): then `k ≈ n`,
-and both the vertical filter and per-frame clustering (§6) are O(n). This is the
-explicit stress case for the 16ms budget; v1 accepts O(n) here and verifies it
-fits at 50k in the benchmarks (§13). A precomputed coarse aggregation for the
-zoomed-out regime is documented as a deferred lever (§13, §16) and is the
-intended fix should 50k miss budget or should 100k become a target.
-
-### Hit-testing index
-
-Rebuilt from the *visible* primitives whenever the base layer redraws (camera or
-data change) — **not** on every `pointermove`: a uniform **screen-space grid**
-(e.g. 64px cells) mapping cell→primitives. While the camera is static (pure
-hover), the existing grid is reused unchanged, so hover stays cheap. `pointermove`
-looks up the cursor's cell and tests the few candidates. Arrow hit-test =
-distance to the orthogonal segment + arrowhead bbox; element line = distance to
-its horizontal segment; cluster marker = rect containment.
-
----
-
-## 6. Level-of-Detail, Collapsing & Aggregation
-
-At lower zoom, many events fall into the same pixel column and labels become
-unreadable. Two mechanisms:
-
-- **Label LOD**: below a `pxPerMs` threshold, suppress per-event labels; show them
-  again on zoom-in or on hover.
-- **Collapsing / clustering** (a v1 feature): events that would render closer than
-  `minSeparationPx` are merged into a **cluster marker** showing a count
-  (e.g. "×7"). For OCP consistency with layout, clustering is a pluggable
-  **`ClusterStrategy`**, not a closed enum, so hosts can supply their own keying
-  without forking the engine:
-
-  ```ts
-  interface ClusterStrategy {
-    // Stable key for an event at the current zoom; events sharing a key and
-    // within minSeparationPx collapse into one marker. ctx carries pxPerMs etc.
-    key(event: TimelineEvent, ctx: ClusterContext): string;
-  }
-  ```
-
-  Three built-ins are shipped — `byPixelColumn`, `byElementPair`, `byDay` — and
-  the default is a composed `bySourceTargetColumn` (`(sourceId, targetId,
-  pixelColumn)`). Clusters expand on zoom-in past the threshold, or on click/hover
-  (overlay shows the members).
-
-A cluster is a derived primitive, computed during the frame from the visible
-event slice — no precomputation needed, keeping live updates cheap. The cost is
-linear in the visible slice; at full zoom-out that slice is ≈ the whole dataset
-(§5), which is the accepted O(n) stress case measured against the budget. Because
-the cluster key includes `pixelColumn`, clusters are recomputed each frame that
-the camera changes (they depend on zoom and pan).
-
----
-
-## 7. Layout Engine (auto-ordering)
-
-The vertical order of element lines is computed by a pluggable
-`LayoutStrategy` to "minimise clutter for a nice display":
-
-```ts
-interface LayoutStrategy {
-  // Pure function of the data — returns element ids in top-to-bottom order.
-  // No rendering, no side effects; trivially unit-testable.
-  order(elements: readonly TimelineElement[], events: readonly TimelineEvent[]): string[];
+  drawNodes(batch: NodeBatch): void;
+  drawText(batch: TextBatch): void;
+  drawImages(batch: ImageBatch): void;
+  measureText(text: string, font: string): TextMetricsLite;
+  endFrame(): void;
+  dispose?(): void;
 }
 ```
 
-The engine maps that order to row indices and y positions; strategies never touch
-pixels or the camera (SRP). Built-in strategies:
+A host can pass its own `{ base, overlay }` renderers through the `renderer`
+option (tests do; so could an offscreen exporter).
 
-- **`byFirstEvent`** (default): order elements by the time of their first event
-  (chronological introduction). Predictable, stable, cheap. Event-less elements
-  (no first-event key) sort last, in stable input order (§1).
-- **`barycenter`**: a crossing-reduction pass over the **single row ordering**.
-  This is *not* layered (Sugiyama) graph drawing — there are no layers; arrows run
-  between arbitrary rows at arbitrary times. It is the single-axis
-  ordering/linear-arrangement problem (NP-hard), for which iterative barycenter
-  sweeps are a standard heuristic: starting from an initial order, repeatedly
-  reposition each row at the average (barycenter) row-index of its neighbours
-  across a few sweeps, to pull strongly-connected elements together and reduce
-  arrow vertical span and crossings.
-- **`explicit`**: honour `element.order` exactly (host-controlled / "pinned").
+Every backend is wrapped by a guard that turns a throwing verb into a
+`render-error` diagnostic, so one failing primitive never aborts the frame.
+Joined polylines (hops, loops, label boxes) are drawn with joins on both
+backends; image errors skip that image and are reported once.
 
-Layout output = ordered elements with y positions, recomputed on data change and
-debounced. During **streaming** updates, the default is *stable append* (new
-elements slot in without reshuffling existing rows) to avoid jarring jumps;
-a full re-layout is opt-in.
+### Backends
 
-> Drag-to-reorder is out of scope for v1, but `explicit` ordering provides the
-> hook a future drag feature would write into.
+`renderer: 'auto' | 'canvas2d' | 'webgl'` (default `'auto'`). `'auto'` picks
+WebGL2 only when it is hardware-accelerated (the probe sets
+`failIfMajorPerformanceCaveat`), otherwise Canvas2D. Each attempt runs on a
+fresh canvas, because a canvas is bound to its first context type: WebGL2 →
+Canvas2D → a null renderer that draws nothing. A timeline holds at most one GL
+context.
 
----
-
-## 8. Time Header & Axis
-
-A multi-row sticky header (top of viewport, fixed vertically, panning with time):
-
-- An **adaptive tick generator** chooses tick levels from `pxPerMs`:
-  e.g. top row = year or month, bottom row = month or day, picking "nice" steps
-  (1/2/5/10 days, weeks, months, quarters, years) so labels never overlap.
-- Calendar math (month/year boundaries, day starts) is computed in **UTC** via
-  `date-fns`, so day/month/year boundaries and labels are identical on every
-  machine and stable for golden tests. Localised display, if ever needed, is a
-  post-v1 concern (would require a configurable time zone and `date-fns-tz`).
-- Tick label formatting is overridable: `(date, level) => string` (the `date` is
-  the UTC instant of the tick).
-- Major ticks extend faint **gridlines** down through the content on the base
-  layer.
-
-The axis is internally a generic continuous scale, so a future non-time
-(numeric) axis is possible, but v1 ships only the time/date scale.
+The WebGL2 backend (ADR 0006) draws each batch as one instanced call from five
+programs (line segment, node, arrowhead, rect, textured rect), uploads each
+frame's instance data once, and rasterizes text and icons with Canvas2D into
+paged atlases with least-recently-used page eviction. Look parity with Canvas2D
+comes from shared arrowhead geometry, the same dash phase rules and joins, and
+the same text engine; the golden suite holds WebGL to the Canvas2D baseline at
+1% of pixels. When the GL context is lost, the base layer stays blank until it
+is restored; if it is not restored within 3 s, the engine switches to Canvas2D
+on a fresh canvas and reports `renderer-fallback`.
 
 ---
 
-## 9. Interaction Model
+## 5. Indexing and Culling
 
-A small pointer **state machine** in `@event-timeline/core` consumes DOM pointer/wheel
-events on the canvas and emits high-level events; the React layer subscribes.
+`DataStore` is the single owner of the data. Events live in parallel typed
+columns (time, source slot, target slot, style slot) sorted by
+`(time, insertion order)`, plus the host objects. There is **one index-build
+path**: `setData` clears, then merges its whole batch through the same
+sort-and-merge that `addEvents` uses (§10). Element extents (`min`/`max` time
+per element) are kept incrementally; the data extent is O(1).
 
-- **Pan**: pointer drag → update `originTime` (horizontal time anchor, §3) and
-  `scrollY` (vertical). Momentum/inertia is a deferred enhancement.
-- **Wheel**: vertical scroll by default; `shift`+wheel → horizontal pan (and
-  trackpad horizontal swipe maps to the same); `ctrl`/`⌘`+wheel (and trackpad
-  pinch) → horizontal zoom about the cursor.
-- **Hover**: pointer moves are **coalesced to one hit-test per animation frame**
-  (the latest position wins); hit-test → emit `hover` with the primitive + opaque
-  `data`; overlay highlights it; React positions an HTML tooltip (crisp text, no
-  canvas text blur).
-- **Click & selection**: hit-test → emit `click`/`select`; selection state held
-  in core; overlay draws selection outlines. Multi-select is opt-in via an option
-  and uses modifier-click — `ctrl`/`⌘`+click toggles an item in/out of the
-  selection, plain click replaces it; with multi-select off, click is
-  single-select.
-- **Live updates** are decoupled from interaction (Section 10).
+**Horizontal culling** is a binary search for the visible window: O(log n + k).
+**Vertical culling** keeps an event when the row _interval_ it spans,
+`[min(sourceRow, targetRow), max(…)]`, meets the visible band: an arrow whose
+endpoints are both off-screen can still cross the screen.
 
-A hit is a **discriminated union** so consumers narrow on `kind` and get a typed
-`data` payload (the `TData` generic of §1), rather than a loose "primitive":
+Zoomed out over many rows, the window holds most events but few meet the band.
+A **row-interval index** (built lazily per data version and row order) groups
+events by top row and finds the ones crossing the band without scanning the
+rest; it is used when its estimate is under half the window.
+
+**Hit-testing** reads the frame's hit targets, recorded from the same geometry
+the builders draw. A 64 px grid over the viewport, built lazily on the first
+pointer query after a base frame, maps cells to targets; boxes are clamped to
+the viewport so tall risers cost a column of cells, not thousands.
+
+---
+
+## 6. Level of Detail, Clustering and Aggregation
+
+- **Label LOD**: below `lod.eventLabelMinPxPerMs` (default 40 px per day),
+  event labels are not drawn; markers still are.
+- **Clustering**: visible events that share a key and fall within
+  `clustering.minSeparationPx` (default 12) of the **first** event of their run
+  merge into a "×N" marker. Runs never chain across the viewport. Keys come
+  from a pluggable `ClusterStrategy<TData>`; the built-ins are `byPixelColumn`,
+  `byElementPair`, `byDay` and the default `bySourceTargetColumn`. Built-in
+  keys are computed numerically from the typed columns.
+- **Expansion**: clicking a marker zooms to its members' time span (with
+  padding). Members at one instant, which no zoom can separate, are spread out
+  in place instead; at the deepest zoom nothing clusters.
+- **Aggregation** (ADR 0005): for the pair-keyed strategies, once a frame would
+  touch more than `clustering.maxMarkers` (default 4,000) events, candidates
+  come from precomputed per-pair time bins (levels of 2^L ms, built lazily per
+  data version) instead of the events. The level starts at bins no wider than
+  the merge distance and coarsens while the window holds more cells than the
+  budget and coarsening still cuts them by a quarter. It is used only when the
+  cells are at most half the events, and hysteresis keeps the path and level
+  stable near the thresholds. An aggregated cluster's members are the events of
+  its pair in its time span, resolved only when needed (tooltip, click,
+  selection highlight). Bins are aligned in time, so markers stay put while
+  panning. `maxMarkers: Infinity` turns aggregation off; other strategies always
+  cluster event by event.
+
+---
+
+## 7. Layout
+
+A `LayoutStrategy<TData>` orders rows: `order(elements, events) => string[]`,
+a pure function with no pixels or camera. Built-ins: `byFirstEvent` (default),
+`barycenter` (crossing reduction by barycenter sweeps, keeping the best order
+seen) and `explicit` (honours `element.order`, the rest by first event). The
+result is normalised: missing ids are appended, unknown and duplicate ids
+dropped, with an `invalid-layout` diagnostic.
+
+Streaming keeps rows stable: with `streamingLayout: 'stable-append'` (default)
+new elements slot in without reshuffling; `'full'` re-runs the strategy,
+debounced by `layoutDebounceMs`.
+
+---
+
+## 8. Time Header
+
+A two-row header: major periods above, minor ticks below. An adaptive
+generator picks the finest step whose labels keep a minimum gap, from years
+through months, weeks and days down to hours and minutes. All calendar math is
+in **UTC** with native `Date.UTC`, so boundaries and goldens are identical on
+every machine. Labels use `Intl.DateTimeFormat` in UTC with `locale` (default
+`'en-US'`), or the host's `formatters.tickLabel(time, level)`. Major labels are
+left-aligned at their period start; the period under the left edge keeps a
+sticky label until the next one pushes it out. Major ticks extend gridlines
+down through the content.
+
+---
+
+## 9. Interaction
+
+The engine listens on its wrapper and turns raw input into intents; it does no
+coordinate math of its own (§3).
+
+- **Drag** with an allowed button (`pointer.buttons`, default primary only)
+  pans time and scrolls rows; a press that moves less than 4 px is a click.
+- **Wheel**: scroll rows; `shift` + wheel (or a horizontal delta) pans time;
+  `ctrl`/`⌘` + wheel (and trackpad pinch) zooms about the cursor. Line and page
+  delta modes are converted to pixels.
+- **Touch**: one finger pans; two fingers pinch, panning by their midpoint and
+  zooming by their spread. `touch-action: none` keeps the page from claiming the
+  gesture.
+- **Keyboard** (when focused, `keyboard: true` by default): arrows pan by a
+  tenth of the view (Shift: half) and scroll by a row (Shift: a page), `+`/`−`
+  zoom about the centre, `0` fits, Escape clears the selection.
+- **Hover** is coalesced to one hit-test per frame and re-resolved after every
+  base redraw, so it follows content moving under a still pointer. Its key is
+  read from the hit target, and the hit (with a cluster's members) is built only
+  when the hover changes.
+- **Click and selection**: a click selects the hit (with `multiSelect`,
+  `ctrl`/`⌘` toggles). A click on a cluster expands it (§6); with the
+  multi-select modifier it toggles all its members. Selection is structured,
+  `{ elements: string[]; events: string[] }`, and is pruned when items are
+  removed.
 
 ```ts
 type HitResult<TData = unknown> =
   | { kind: 'element'; element: TimelineElement<TData> }
-  | { kind: 'event';   event: TimelineEvent<TData> }
+  | { kind: 'event'; event: TimelineEvent<TData> }
   | { kind: 'cluster'; events: TimelineEvent<TData>[]; count: number };
-```
 
-Engine events are a **typed emitter map** (not a stringly-typed `EventEmitter`),
-so `on`/`off` are checked against the payload type per event name:
-
-```ts
-interface TimelineEventMap<TData = unknown> {
-  viewportChange: { timeRange: [number, number]; scrollY: number; pxPerMs: number; visibleRowRange: [number, number] };
-  hover:          HitResult<TData> | null;          // null on leave
-  click:          { hit: HitResult<TData>; modifiers: { ctrlOrMeta: boolean; shift: boolean } };
-  selectionChange:{ ids: string[] };
-  dataChange:     { added: number; removed: number; updated: number };
-  ready:          void;
+interface TimelineEventMap<TData> {
+  viewportChange: ViewportState; // at most once per frame
+  hover: HitResult<TData> | null;
+  click: { hit: HitResult<TData>; modifiers: { ctrlOrMeta: boolean; shift: boolean } };
+  selectionChange: Selection;
+  dataChange: { elements: ChangeCounts; events: ChangeCounts }; // added/removed/updated
+  ready: void; // the engine is constructed
+  firstFrame: void; // the first frame with a size was drawn
 }
 ```
 
+The surface has `role="application"`, an accessible name
+(`accessibility.label`) and an optional description; a DOM mirror of the
+content is out of scope.
+
 ---
 
-## 10. Live / Streaming Updates
-
-Imperative core API for incremental change without a full rebuild:
+## 10. Live Updates
 
 ```ts
-engine.setData(data);                 // full replace
-engine.addEvents(events);             // insert into sorted index + buckets, update extents
+engine.setData(data); // replace everything
+engine.addEvents(events); // sort the batch, merge once
 engine.removeEvents(ids);
-engine.addElements(elements);         // stable-append layout by default
-engine.updateElement(id, patch);
+engine.updateEvent(id, patch); // re-indexed; a new time moves it
+engine.addElements(elements);
+engine.updateElement(id, patch); // in place; id is immutable
+engine.removeElements(ids); // with every event touching them
 ```
 
-Each mutation updates only the affected indexes and extents, marks the base layer
-dirty, and (debounced) re-runs layout if configured.
-
-**Insert complexity.** The temporal index is a sorted array (§5), so a single
-insert is O(n) (shift cost). `addEvents` is therefore designed for **batched**
-inserts: it sorts the incoming batch of size `m` once (O(m log m)) and performs a
-**single merge** into the existing array (O(n + m)), not `m` individual splices.
-Hosts streaming at high frequency should coalesce events into batches (e.g. one
-`addEvents` per animation frame) rather than calling per event. If profiling ever
-shows the merge dominating, the documented escalation is a bucketed index
-(per-UTC-day buckets, each small and individually cheap to insert into) behind the
-same API — deferred until measured.
-
-**React sync.** The React layer drives `setData` from the `data` prop via
-shallow diffing: when the `elements`/`events` array references change it issues a
-full `setData` (a full rebuild — acceptable for prop-driven updates, not for
-high-frequency streams). For high-frequency streams, hosts use the imperative
-`ref` API (`addEvents`/`removeEvents`/…) directly to bypass React reconciliation
-and get incremental index updates.
+`addEvents` sorts the incoming batch (O(m log m)) and merges it into the
+columns once (O(n + m)); events at an equal time land after existing ones.
+Removals compact the columns and recompute only the touched extents. A mutation
+never refits the camera, so streaming doesn't jerk the view. Hosts streaming at
+high frequency should batch, e.g. one `addEvents` per animation frame.
 
 ---
 
-## 11. Styling, Theming & Customisation
+## 11. Styling and Theming
 
-- **Theme object**: background, gridline, header text, default line/arrow colours,
-  fonts, `rowHeight`, gaps, arrow thickness, arrowhead size, label padding.
-- **Per-item style resolvers** (data-driven): `(element) => Partial<ElementStyle>`
-  and `(event) => Partial<EventStyle>`.
-- **Formatters**: event label, tick label, element label.
-- **Icons**: `element.icon` as URL/emoji/`HTMLImageElement`, drawn in the label
-  area; images preloaded and cached.
-- **Resolution order**, most specific wins, per visual property:
-  **per-item `style`** → resolver callback → theme default. That is, an explicit
-  value on `element.style`/`event.style` overrides the resolver's value for the
-  same property, which in turn overrides the theme default. (Each property is
-  resolved independently; partials only override the keys they set.)
+- **Theme** (`Theme`, overridden with a `ThemeInput`): `background` plus the
+  groups `grid`, `header`, `layout`, `emphasis`, `cluster`, `rowSeparator`,
+  `element` and `event`. An override is merged group by group, so
+  `{ header: { height: 56 } }` changes only that; dash arrays are replaced
+  whole. Sizes are CSS px; colours any CSS colour.
+- **Resolution order**, per property, most specific first: the item's `style`
+  → the host resolver (`styleResolvers.element/event`) → the theme's
+  `element`/`event` defaults. Undefined falls through.
+- **Formatters**: `elementLabel`, `eventLabel`, `tickLabel`.
+- **Icons**: a URL (loaded once, CORS-enabled first, reported if it fails), an
+  emoji or glyph (drawn as text in the label colour), or any
+  `CanvasImageSource`. An image that finishes loading triggers a redraw.
+- Cluster markers use the theme's `cluster` colours and the default event
+  stroke: a marker merges events whose styles may differ.
+- Everything is changeable at runtime: `setTheme`, `setStyleResolvers`,
+  `setFormatters`, `setOptions`; each invalidates only what depends on it.
 
-Widths and sizes are in **CSS pixels** (the renderer multiplies by `dpr`
-internally, §3); colours are any valid CSS colour string.
-
-```ts
-interface ElementStyle {
-  lineColor: string;
-  lineWidth: number;     // CSS px
-  labelColor: string;
-  labelFont: string;     // CSS font shorthand, e.g. "12px Inter, sans-serif"
-  iconSize: number;      // CSS px
-}
-interface EventStyle {
-  arrowColor: string;
-  arrowWidth: number;    // CSS px
-  arrowheadSize: number; // CSS px
-  labelColor: string;
-  labelFont: string;
-  nodeRadius: number;    // CSS px, source node dot
-}
-
-interface Theme {
-  background: string;
-  gridlineColor: string;
-  headerTextColor: string;
-  headerFont: string;
-  rowHeight: number;     // CSS px
-  rowGap: number;        // CSS px
-  labelPadding: number;  // CSS px
-  element: ElementStyle; // theme-level defaults (the base of the resolution chain)
-  event: EventStyle;
-}
-```
-
-`ElementStyle`/`EventStyle` reuse the same type at every level of the resolution
-chain (theme default → resolver → per-item `style`), so there is a single
-definition of "what is stylable" rather than parallel shapes per layer (DRY).
+Only `defaultTheme` ships in core; theming is the host's.
 
 ---
 
-## 12. React Layer (`@event-timeline/react`)
+## 12. React Binding
 
 ```tsx
-<Timeline
-  data={{ elements, events }}
-  theme={theme}
-  options={{ layout: 'byFirstEvent', clustering: {...}, zoom: {...} }}
+<Timeline<TData>
+  ref={ref} // TimelineHandle<TData>
+  data={data}
+  theme={themeInput}
+  options={{ multiSelect: true, clustering: { maxMarkers: 2000 } }}
   styleResolvers={{ element, event }}
-  formatters={{ eventLabel, tickLabel }}
-  onHover={(hit) => ...}
-  onSelectionChange={(ids) => ...}
-  onViewportChange={(v) => ...}
-  ref={ref}
+  formatters={{ eventLabel }}
+  tooltip // or renderTooltip={(hit) => …}
+  onHover={…} onClick={…} onSelectionChange={…} onViewportChange={…}
+  onDataChange={…} onReady={…} onFirstFrame={…}
 />
 ```
 
-- Owns the two `<canvas>` elements + a positioned HTML overlay container.
-- The React layer owns a `ResizeObserver` on the container and calls
-  `engine.resize(cssW, cssH, dpr)` (core attaches no observer of its own, §2).
-  `useTimeline` instantiates the core engine once and syncs props → engine
-  imperatively (avoids React in the render loop).
-- **Prop-sync / referential-stability contract.** Props are diffed by reference
-  and only re-applied to the engine when the reference changes. `data`,
-  `styleResolvers`, `formatters`, `theme`, and `options` should therefore be
-  **memoized by the host** (`useMemo`/`useCallback`); passing fresh inline
-  objects/functions every render will re-apply (and, for `data`, trigger a full
-  `setData`) each render. This is documented prominently because the demo masks
-  it (its props are stable) while real apps will not.
-- Tooltip rendered via portal from hover state.
-- **StrictMode**-safe (idempotent setup/teardown), **SSR-safe** (no `window` at
-  import time; engine created in effect).
-- The component is generic: `Timeline<TData>` with `forwardRef` exposing a typed
-  handle (`useImperativeHandle`). Props mirror the engine's event map (§9) as
-  optional callbacks; every emitted event has a corresponding `on*` prop so the
-  React surface is a faithful, segregated view of the core API (ISP) rather than
-  an arbitrary subset:
-
-```ts
-interface TimelineProps<TData = unknown> {
-  data: TimelineData<TData>;
-  theme?: Partial<Theme>;
-  options?: TimelineOptions;          // { layout, clustering, zoom, multiSelect, onDiagnostic, ... }
-  styleResolvers?: { element?: (e: TimelineElement<TData>) => Partial<ElementStyle>;
-                     event?:   (e: TimelineEvent<TData>)   => Partial<EventStyle>; };
-  formatters?: { eventLabel?: ...; tickLabel?: ...; elementLabel?: ...; };
-  onHover?: (hit: HitResult<TData> | null) => void;
-  onClick?: (e: TimelineEventMap<TData>['click']) => void;
-  onSelectionChange?: (ids: string[]) => void;
-  onViewportChange?: (v: TimelineEventMap<TData>['viewportChange']) => void;
-  onDataChange?: (d: TimelineEventMap<TData>['dataChange']) => void;
-  onReady?: () => void;
-}
-
-interface TimelineHandle<TData = unknown> {
-  zoomToRange(start: Time, end: Time): void;
-  panToTime(t: Time): void;
-  fit(): void;
-  select(ids: string[]): void;
-  getViewport(): TimelineEventMap<TData>['viewportChange'];
-  resize(cssW: number, cssH: number, dpr: number): void;
-  // streaming methods of §10:
-  setData(d: TimelineData<TData>): void;
-  addEvents(e: TimelineEvent<TData>[]): void;
-  removeEvents(ids: string[]): void;
-  addElements(el: TimelineElement<TData>[]): void;
-  updateElement(id: string, patch: Partial<TimelineElement<TData>>): void;
-}
-```
+- One engine per component, mounted into the component's container. `theme`,
+  `options`, `styleResolvers` and `formatters` are compared **field by field**
+  (plain objects and arrays by content, functions by reference), so inline
+  objects are fine; only real changes reach the engine. A new `data` reference
+  calls `setData`.
+- `TimelineOptions` is derived from the engine's options, so every engine
+  option is available as a prop.
+- The tooltip is positioned from the pointer without re-rendering React on
+  every move, flips at the viewport edges, uses the theme's colours, and lists
+  a cluster's members. `tooltip={false}` or a `renderTooltip` returning `null`
+  hides it.
+- The handle exposes the camera (`fit`, `panToTime`, `zoomToRange`, `zoomIn`,
+  `zoomOut`, `setScrollY`, `scrollToElement`, `revealEvent`), selection
+  (`select`, `getSelection`, `clearSelection`), data (`setData`, `getData`,
+  `addEvents`, `removeEvents`, `updateEvent`, `addElements`, `removeElements`,
+  `updateElement`), `getViewport`, `getRendererBackend`, `version` and the
+  underlying `engine`. Methods called before the engine exists are no-ops;
+  getters return `null`.
+- StrictMode-safe and SSR-safe: nothing touches `window` at import time.
 
 ---
 
-## 13. Performance Plan & Budgets
+## 13. Performance Budgets
 
-- **Budget**: ≤16ms base-layer frame and ≤4ms overlay frame at 50k events. These
-  are **per-layer** budgets, not additive — in steady state only one layer is
-  dirty per frame (pan ⇒ base; hover ⇒ overlay). The rare frame where both are
-  dirty (e.g. hovering mid-pan) may reach ~20ms and drop a single frame; this is
-  accepted, not a budget violation, because it does not recur frame-over-frame.
-- **Reproducible baseline.** "Mid-range laptop" is pinned for CI as Chromium with
-  CPU throttling ×4 (via CDP `Emulation.setCPUThrottlingRate`) at DPR 1; the
-  numeric thresholds above are asserted under that profile so the perf gate is
-  deterministic across machines.
-- **Worst case = full zoom-out** (whole domain visible), where per-frame work is
-  O(n) (§5–§6). The 50k budget is asserted specifically in this regime, not just
-  when zoomed in.
-- Levers (all above): viewport culling, overlay/base split, label LOD,
-  clustering, style-batched drawing, text/image caches, allocation-free hot path,
-  integer-aligned coordinates.
-- **Memory budget.** Derived structures at 50k events / 1000s of lines: the
-  sorted event array, `Map<id,element>`, `Map<id,extent>`, and per-element
-  buckets storing **integer indices into the sorted array** (not object copies).
-  Target ≤ ~10 MB of derived index overhead on top of the host's own data;
-  tracked as a benchmark, not a hard gate.
-- **Benchmarks** (Playwright + perf marks): frame time vs dataset size
-  (1k/10k/50k/100k), pan/zoom interaction latency, time-to-first-render, derived
-  memory. 100k is measured as a **watchdog only** — it is out of scope for v1
-  (§ decisions table) and is expected to degrade gracefully (no pass/fail
-  threshold); it exists to catch super-linear regressions early.
-- Deferred scale levers (documented, not built in v1): WebGL backend, web-worker
-  indexing, aggregated bin rendering for the zoomed-out regime / 100k+.
+- **Budgets** under the reference profile (Chromium, CPU ×4, DPR 1, production
+  build): base frame ≤ 16 ms and overlay frame ≤ 4 ms (medians). They are
+  per-layer: in steady state only one layer redraws per frame.
+- **Gate 2** (the 1.0 requirement): 50k events at 60 fps in every regime
+  (interactive window, full zoom-out sparse, full zoom-out dense) on the
+  backend users get on capable hardware, WebGL2: base and overlay within budget
+  and the frame interval at 16.7 ms. The `perf-gpu` Playwright project asserts
+  it; it skips itself where Chromium has no hardware WebGL2.
+- **Canvas2D** is the fallback: budgets are hard-gated up to 10k events; above
+  that the numbers are watchdogs. Its zoomed-out frames at 50k are dominated by
+  rasterization, which the base timing doesn't include, so the perf spec
+  reports the frame interval (p95) next to every median.
+- **Tracking**: perf runs nightly on main (`perf.yml`), not on pull requests,
+  and a scenario more than 20% and 1 ms slower than the last successful run
+  fails it. `PERF_RUNNER` selects a dedicated runner. 100k is a watchdog only.
+- **Harness**: `examples/demo/bench.html` drives the core engine directly
+  (`?renderer=`, `?maxMarkers=`), with frame times from `onFrameStats`.
 
 ---
 
-## 14. Testing Strategy
+## 14. Testing
 
-- **Unit (Vitest)** — the bulk; everything in core is pure/deterministic:
-  time scale & zoom-about-cursor math, tick generation, layout strategies,
-  clustering, extent computation, index range queries, hit-testing geometry.
-- **Visual / golden (Playwright)** — render fixed seeded datasets to canvas and
-  screenshot-compare; covers lines, orthogonal arrows, header, clusters, theming.
-- **Interaction (Playwright)** — pan/zoom/hover/select against the demo app.
-- **Perf** — benchmarks from Section 13 with regression thresholds.
-- Seeded synthetic dataset generator (deterministic) shared by demo + tests.
-
----
-
-## 15. Phased Delivery Plan
-
-Each phase ends with a runnable demo and explicit acceptance criteria.
-
-- **Phase 0 — Tooling & scaffolding.** Install Node 20 + pnpm; monorepo,
-  `@event-timeline/core` and `@event-timeline/react` package skeletons, tsup build, Vitest,
-  Playwright, ESLint/Prettier, Vite demo app, CI.
-  *Accept:* `pnpm build/test/lint` green; empty `<Timeline/>` mounts.
-
-- **Phase 1 — Core skeleton & static lines.** Domain model + store, `TimeScale`,
-  `Camera`, `Renderer` interface + `Canvas2DRenderer`, DPR, layered canvases,
-  rAF dirty-flag loop, draw element lines + a basic time header. Basic pan only.
-  *Accept:* lines render at correct times; smooth horizontal pan.
-
-- **Phase 2 — Arrows, labels, element identity.** Orthogonal arrows (riser + node
-  dot + arrowhead, direction-aware), event labels, element label+icon at line
-  start with sticky-left fallback, viewport culling (by **linear scan** at this
-  phase — correct and fine at 10k; the binary-search temporal index that makes
-  culling sub-linear arrives in Phase 4). Culling uses the row-interval test of
-  §5, so arrows crossing the band with both endpoints off-screen are retained.
-  *Accept:* 10k synthetic events render correctly and culled.
-
-- **Phase 3 — Interactions.** Zoom-about-cursor, vertical scroll, pointer state
-  machine, per-frame hit-test grid, hover highlight + HTML tooltip (React),
-  click/selection events + selection overlay.
-  *Accept:* hover/select correct; overlay independent of base redraws.
-
-- **Phase 4 — Scale & LOD.** Sorted temporal index + per-element buckets, label
-  LOD, event collapsing/aggregation clusters with expand-on-zoom/click.
-  *Accept:* 50k events at ≥60fps pan/zoom; clusters behave.
-
-- **Phase 5 — Layout engine.** `byFirstEvent` (default), `barycenter`
-  crossing-reduction, `explicit` ordering; debounced recompute.
-  *Accept:* measurable crossing reduction on a connected fixture.
-
-- **Phase 6 — Theming & customisation.** Theme object, per-item style resolvers,
-  formatters, icon pipeline, full style resolution order.
-  *Accept:* demo themes + data-driven colours/labels.
-
-- **Phase 7 — Live/streaming updates.** Incremental index/extent updates, stable
-  append layout, imperative React `ref` API, prop-diff sync.
-  *Accept:* streaming inserts at interactive rates without full rebuild.
-
-- **Phase 8 — Polish & release.** Perf passes, golden tests, docs, examples,
-  Changesets publish setup.
-  *Accept:* benchmarks meet budgets; docs complete.
+- **Unit (Vitest)**: the bulk. Core runs headless through injected recording
+  renderers and manual frames (`src/testing/`); WebGL code runs against a
+  recording fake GL. Coverage is measured with thresholds that only ratchet up.
+- **Interaction (Playwright)**: Chromium, Firefox and WebKit against the e2e
+  fixture page `examples/demo/e2e.html`, configured through its URL and
+  `window.__e2e`, never through the demo's panel.
+- **Golden (Playwright)**: fixed seeded scenes on the fixture page, compared to
+  Linux baselines at 1% of pixels, Canvas2D and WebGL against the same
+  baseline. Baselines are regenerated by the `update-goldens` workflow.
+- **Perf**: §13.
+- Seeded synthetic data generators are shared by the demo, tests and harness.
 
 ---
 
-## 16. Risks, Open Questions & Future Work
+## 15. Delivery History
 
-- **WebGL backend** — ✅ shipped (see "WebGL backend implementation notes"
-  below). The `Renderer` interface was the seam, as designed.
-- **Duration/range items** (vis-timeline-style bars on a line) — not modelled in
-  v1; the `Event` type could later gain an `endTime`.
-- **Orthogonal arrow congestion**: many risers at the same x need sub-lane
-  x-offsets; clustering mitigates most cases but dense same-day fan-outs can still
-  overlap. **v1 stance**: Phase 2 ships a simple deterministic sub-lane x-offset
-  (spread risers sharing an x-column by a few px in stable order) and otherwise
-  *accepts* residual overlap, relying on clustering (Phase 4) to collapse the
-  densest cases. A full lane-assignment / routing pass is **out of scope for v1**
-  and tracked here as future work; it is not a Phase acceptance criterion.
-- **Accessibility**: canvas is opaque to AT; a future DOM mirror / keyboard nav is
-  out of scope for v1.
-- **Minimap / overview**, **PNG export**, **inertia panning** — deferred
-  enhancements.
-
-### WebGL backend implementation notes
-
-`WebGLRenderer` (`render/webgl/`) implements the §4 seam over **WebGL2 only**
-(the fallback is Canvas2D, not WebGL1). Selection lives in a
-`createRenderer` factory driven by `TimelineEngineOptions.renderer`
-(`'auto' | 'canvas2d' | 'webgl'`, default `'auto'`):
-
-- **Auto policy.** `'auto'` probes WebGL2 with
-  `failIfMajorPerformanceCaveat: true` — on software GL, Canvas2D is usually
-  faster — while explicit `'webgl'` drops the flag and forces WebGL2 whenever
-  the API exists. The probe runs on a scratch canvas first, because a canvas
-  is permanently bound to its first context type; every failure path degrades
-  to Canvas2D (§1 lenient). The React binding keys the canvas elements on the
-  preference so a backend switch remounts fresh canvases.
-- **Architecture.** Two GL contexts, one per canvas layer, each wrapped in a
-  `GlLayer` (program, VAO, one DYNAMIC_DRAW vertex buffer, texture caches);
-  CPU-side work (text rasterizer, colour cache, vertex scratch) is shared.
-  One shader program with a uniform fragment-mode switch (solid / SDF circle /
-  textured) and a `[x, y, u, v]` vertex layout; one order-preserving draw call
-  per engine batch — the same painter's-algorithm granularity as Canvas2D.
-- **Compositing parity.** Context attrs `{ alpha, antialias,
-  premultipliedAlpha, preserveDrawingBuffer: false, no depth/stencil }`;
-  premultiplied colours with `(ONE, ONE_MINUS_SRC_ALPHA)` blending. The base
-  layer clears to the parsed theme background, the overlay to transparent.
-  `preserveDrawingBuffer: false` is safe because each layer is fully redrawn
-  within one rAF callback (`drawFrame`).
-- **Parity by construction.** Arrowhead geometry is shared with Canvas2D
-  (`render/arrowGeometry.ts`); dashes are CPU-expanded with per-segment phase
-  (matching `moveTo` subpath semantics); text is rasterized by an offscreen 2D
-  canvas — Canvas2D's own baseline/kerning/colour-emoji behaviour — into a
-  per-context shelf-packed atlas whose key includes the colour (emoji ignore
-  fillStyle, so tint-in-shader would break them); `measureText` uses the same
-  2D context, so layout is identical across backends.
-- **Lifecycle.** `webglcontextlost` suspends draw verbs; restore rebuilds GL
-  objects, invalidates texture caches, and asks the engine to redraw.
-  `dispose` deletes GL objects but deliberately does **not** `loseContext()` —
-  a remount on the same canvas (React StrictMode) re-acquires the same
-  context, and a lost one would be unusable forever.
-- **Testing.** Pure modules (dash, colour, shelf packing, vertex builders,
-  factory fallback) are unit-tested in the node env; the golden suite pins
-  existing baselines to `?renderer=canvas2d` and adds a parity test that
-  renders the fixture under WebGL against the same Canvas2D baseline (looser
-  diff ratio for AA); a WebGL smoke spec covers 10k rendering, zooming, and
-  the backend-switch round-trip. The §13 perf budgets stay calibrated against
-  Canvas2D (`bench.ts` pins `renderer: 'canvas2d'`).
-
-### Phase 1 implementation notes & follow-ups
-
-Carried over from the Phase 1 review; none block Phase 1 acceptance:
-
-- **`date-fns` is a declared dep but not yet imported.** Phase 1 ticks use native
-  `Date.UTC` integer arithmetic for machine-stable boundaries (§8); the per-function
-  `date-fns` calendar math (§2) first lands when later phases need variable-length
-  interval stepping. Keep the dep provisioned, or drop it until then.
-- **No-raw-`pxPerMs` lint rule.** §3 relies on convention; add a
-  `no-restricted-syntax` ESLint guard so `time * pxPerMs` outside the scale module
-  is caught mechanically. (Would also flag `ticks.ts`'s `thinByPixels`, which uses a
-  *relative* `time * pxPerMs` metric that is correct but reads as absolute — rename
-  or route through a `timeToX` callback when the rule lands.)
-- **Vertical culling is center-only.** `drawBase` culls element rows by line-center
-  Y; Phase 2 (row-anchored labels/icons/arrows) should switch to a padded row-band
-  test so partially-visible rows aren't dropped.
-- **`scaleFontToDevice` scales only the first `px` token.** Fine for current themes;
-  tighten to handle `12px/16px` line-height shorthands if custom fonts are exposed.
-
-### Phase 2 implementation notes & follow-ups
-
-Carried over from the Phase 2 review; none block Phase 2 acceptance:
-
-- **Opaque image handle on the seam.** `ImageBatch` carries `RendererImage` (an
-  opaque `unknown` handle), not `HTMLImageElement`, so the `Renderer` interface
-  stays free of DOM types and the §4 substitutability claim holds. The engine
-  treats icons as black boxes: `Canvas2DRenderer` narrows the handle to a
-  `CanvasImageSource` at the single `drawImage` site, and a future `WebGLRenderer`
-  would upload it as a texture. Engine-internal icon code (the icon cache) still
-  uses concrete `HTMLImageElement`; it widens to the handle at the snap boundary.
-- **Header mask.** Because Phase 2 content is row-anchored and can scroll partway
-  under the header, `drawBase` repaints the header background band over
-  `[0,0,cssWidth,headerHeight]` *after* content and *before* the header baseline +
-  ticks (§4), so arrows/labels never bleed over the header. A new backend-neutral
-  `fillRect` verb backs this; if more rect fills appear, fold it into a batched
-  `drawRects` verb for seam consistency.
-- **Sub-lane column keying uses un-snapped CSS px** (`Math.round(baseX)`). Deterministic
-  and good enough per the §16 "accepts residual overlap" stance; at very high DPR two
-  events <1 CSS px apart share a column. Revisit only if clustering (Phase 4) doesn't
-  already collapse such cases.
-
-### Phase 6 implementation notes & follow-ups
-
-Carried over from the Phase 6 review; none block Phase 6 acceptance:
-
-- **Resolution merge is "undefined falls through".** `render/resolveStyle.ts`
-  `overlayStyle(base, ...partials)` layers theme → resolver → per-item `style`,
-  later layers winning, but a property that is `undefined`/absent in a partial
-  inherits the prior layer — preserving the `?? theme.default` semantics each level
-  used pre-Phase-6 and keeping the §11 per-property independence. The engine binds
-  the four resolution functions once from its (instance-stable) theme and passes
-  them on `BuildContext`, so builders never branch on "was a resolver/formatter
-  supplied" and resolution has a single home.
-- **Clusters use theme defaults, not per-event resolvers.** A "×N" marker merges
-  many events with possibly different styles, so there is no single event to
-  resolve; `addCluster` keeps `theme.clusterColor`/`theme.event.*`. Per-event
-  resolution applies only to un-clustered arrows. If a host ever needs
-  cluster-level styling, the hook would be a separate `ClusterStyle` resolver keyed
-  on the member set — deferred, not built.
-- **Event-label formatter can synthesise labels.** `formatEventLabel` defaults to
-  `e => e.label`, but a host formatter receives the whole event and may return a
-  string for an event with no raw `label`; the builder draws it when truthy and
-  skips empty strings. Label LOD (§6) still gates *whether* the label draws.
-- **No theme preset shipped in core.** Only `defaultTheme` (dark) + `resolveTheme`
-  are public; theming is host-driven (the demo supplies its own light
-  `Partial<Theme>`). A `lightTheme` preset is an easy future addition if asked for.
-
-### Phase 8 implementation notes & follow-ups
-
-Carried over from the Phase 8 (polish & release) work:
-
-- **Frame-timing seam (`onFrameStats`).** Per-layer draw cost is exposed through
-  an optional `onFrameStats?: (s: FrameStats) => void` engine option (mirrored on
-  the React `options`), bracketing each `drawBase`/`drawOverlay` with
-  `performance.now()`. It is allocation- and measurement-free when omitted (the
-  default), matching the injectable-sink (DIP) pattern of `onDiagnostic`. The
-  headless harness at `examples/demo/bench.html` drives `@event-timeline/core`
-  directly and feeds these stats to the Playwright perf spec.
-- **Measured perf vs the §13 budget — the 50k base figure is aspirational.**
-  Benchmarked under the pinned baseline (Chromium, CPU ×4, DPR 1, production
-  build), the base-layer frame scales linearly with the *visible* event count `k`
-  (median: 1k ≈ 5–8 ms, 10k ≈ 11 ms, 50k ≈ 37 ms interactive / 187 ms full
-  zoom-out, 100k ≈ 60 / 385 ms). The engine therefore meets the **≤16 ms base**
-  budget up to ~10k events and the **≤4 ms overlay** budget through 50k, but does
-  **not** meet ≤16 ms base at 50k under ×4 in any regime. This is the §5/§13 O(n)
-  reality: full zoom-out is explicitly the "accepted O(n)" stress case, and the
-  ≤16 ms-at-50k target needs the **precomputed coarse aggregation for the
-  zoomed-out regime** that §13/§16 already list as the deferred lever (the
-  intended fix should 50k miss budget). The CI perf gate (`perf.spec.ts`) reflects
-  this honestly: it **hard-asserts** the budgets only where the engine meets them
-  (base ≤16 ms ≤10k; overlay ≤4 ms ≤50k) and **logs** the larger sizes and the
-  full-zoom-out regime as watchdogs (catching super-linear regressions without
-  failing on the known linear cost). `PERF_TOLERANCE_MS` absorbs runner jitter.
-- **Perf runs against the production preview, not the dev server.** A second
-  Playwright `webServer` builds the demo and serves it via `vite preview` so
-  frame times reflect minified/optimised code; the `bench` HTML entry is added to
-  `vite build`'s inputs. Golden/interaction specs still run against the dev
-  server (rendering output is identical, and only DPR is pinned for goldens).
-- **Bundle sizes are well under budget.** `size-limit` (run in CI) reports core
-  ≈10 KB and the marginal react binding ≈1.5 KB (minified+compressed) against the
-  §2 30 KB / 5 KB budgets — comfortable headroom even though `date-fns` is
-  currently bundled inline by tsup rather than externalised.
+Moved to [`docs/HISTORY.md`](HISTORY.md).
 
 ---
 
-## 17. Verification (how to validate the build end-to-end)
+## 16. Open Questions and Future Work
 
-- `pnpm install && pnpm build` — both packages emit ESM/CJS/types.
-- `pnpm test` — Vitest unit suites + Playwright golden/interaction/perf pass.
-- `pnpm --filter demo dev` — open the demo, load the seeded 50k dataset, and
-  manually verify: lines start just before first event with label+icon; orthogonal
-  direction-aware arrows with labels; adaptive day/month/year header; smooth
-  pan/zoom-about-cursor; hover tooltip + highlight; click selection; clusters
-  collapse/expand on zoom; streaming inserts stay interactive.
-- Perf benchmark report shows ≤16ms base frame at 50k events.
+- **Durations**: `endTime` is reserved and validated but not drawn.
+- **Arrow congestion**: risers sharing a pixel column get small sub-lane
+  offsets; there is no full routing pass.
+- **Cluster preview on hover**: hovering a marker shows its members in the
+  tooltip; there is no in-canvas fan-out preview.
+- **Not planned for 1.0**: drag-to-reorder (the `explicit` layout is the
+  hook), minimap, PNG export, inertial panning, a numeric (non-time) axis, a
+  DOM accessibility mirror, rendering in a worker, a WebGPU backend.
+
+---
+
+## 17. Verification
+
+- `pnpm install && pnpm build`: both packages emit ESM, CJS and types.
+- `pnpm typecheck`, `pnpm lint`, `pnpm test:coverage`: green.
+- `pnpm test:e2e`: interaction (three browsers) and golden specs green on
+  Linux; `pnpm exec playwright test --project perf --project perf-gpu
+  --workers=1` for the budgets.
+- `pnpm dev`: the demo shows lines with start markers, direction-aware arrows,
+  the adaptive header, smooth pan and zoom about the cursor, hover tooltips,
+  selection, clusters expanding on zoom, and streaming.

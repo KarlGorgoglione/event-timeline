@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
+import { openFixture } from './fixturePage';
 
-// Phase 4 acceptance (DESIGN.md §15): 50k events stay interactive, with dense
+// Scale (DESIGN.md §5, §6): 50k events stay interactive, with dense
 // events collapsed into clusters at zoom-out. The robust browser-level signal:
 // the 50k dataset mounts with no page/console errors (the binary-search temporal
 // index + clustering keep the frame bounded), and the base canvas contains the
@@ -14,10 +15,7 @@ test('renders 50k events with clusters and no errors', async ({ page }) => {
     if (m.type() === 'error') errors.push(m.text());
   });
 
-  await page.goto('/?renderer=canvas2d');
-  await expect(page.getByTestId('timeline-root')).toBeVisible();
-  // Build + mount the 50k dataset via the panel's dataset selector.
-  await page.getByLabel('Dataset').selectOption('synthetic50k');
+  await openFixture(page, { dataset: 'synthetic50k' });
 
   // The cluster marker colour (#d29922 = rgb(210,153,34)) appears in the content
   // band only when dense events collapse — a deterministic render signal.

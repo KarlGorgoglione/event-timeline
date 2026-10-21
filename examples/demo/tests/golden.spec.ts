@@ -1,4 +1,5 @@
 import { expect, test } from '@playwright/test';
+import { openFixture } from './fixturePage';
 
 // Golden / visual tests (DESIGN.md §14). Render deterministic seeded datasets to
 // the canvas at DPR 1 and screenshot-compare against committed baselines. Uses
@@ -13,13 +14,7 @@ const SNAPSHOT_OPTIONS = { maxDiffPixelRatio: 0.01 } as const;
 // engine default is 'auto', which picks WebGL when available — §4).
 test.describe('golden renders (§14)', () => {
   test('default fixture, fitted', async ({ page }) => {
-    await page.goto('/?renderer=canvas2d');
-    await expect(page.getByTestId('timeline-root')).toBeVisible();
-    await page.getByRole('button', { name: 'Fit' }).click();
-    // Collapse the panel so it doesn't overlay the canvas in the screenshot.
-    await page
-      .getByRole('button', { name: 'Collapse customization panel' })
-      .click();
+    await openFixture(page);
 
     await expect(page.getByTestId('timeline-root')).toHaveScreenshot(
       'fixture-fit.png',
@@ -28,16 +23,9 @@ test.describe('golden renders (§14)', () => {
   });
 
   test('AML scenario with data-driven colours', async ({ page }) => {
-    await page.goto('/?renderer=canvas2d');
-    await expect(page.getByTestId('timeline-root')).toBeVisible();
-    await page.getByLabel('Dataset').selectOption('aml');
-    // Colour by pattern via the data-driven resolvers toggle (in "Data hooks").
-    await page.getByText('Data hooks').click();
-    await page.getByRole('switch', { name: 'Data-driven colours' }).click();
-    await page.getByRole('button', { name: 'Fit' }).click();
-    await page
-      .getByRole('button', { name: 'Collapse customization panel' })
-      .click();
+    await openFixture(page, { dataset: 'aml' });
+    // Colour by pattern via the data-driven resolvers.
+    await page.evaluate(() => window.__e2e!.setDataHooks({ colours: true }));
 
     await expect(page.getByTestId('timeline-root')).toHaveScreenshot(
       'aml-colours.png',
@@ -45,15 +33,14 @@ test.describe('golden renders (§14)', () => {
     );
   });
 
-  // Look parity (§4): the WebGL backend must reproduce the Canvas2D baseline.
-  // Geometry and colours are shared math, so only anti-aliasing/text rasters
-  // may differ — hence the looser ratio against the SAME baseline file. If AA
-  // drift ever makes this flaky, switch to a dedicated -webgl baseline.
+  // Look parity (§4, W-06): the WebGL backend must reproduce the Canvas2D
+  // baseline under the same 1% budget. Geometry, dash phase, joins and text
+  // rasterization are shared with Canvas2D, so only edge anti-aliasing differs
+  // (measured ≈0.1% of pixels on this fixture).
   test('WebGL backend matches the Canvas2D fixture baseline', async ({
     page,
   }) => {
-    await page.goto('/?renderer=webgl');
-    await expect(page.getByTestId('timeline-root')).toBeVisible();
+    await openFixture(page, { renderer: 'webgl' });
     // The footer reports the backend once the engine is ready.
     const status = page.getByTestId('status-renderer');
     await expect(status).not.toHaveText('renderer: —');
@@ -61,14 +48,10 @@ test.describe('golden renders (§14)', () => {
       (await status.textContent()) !== 'renderer: webgl',
       'WebGL2 unavailable in this environment',
     );
-    await page.getByRole('button', { name: 'Fit' }).click();
-    await page
-      .getByRole('button', { name: 'Collapse customization panel' })
-      .click();
 
     await expect(page.getByTestId('timeline-root')).toHaveScreenshot(
       'fixture-fit.png',
-      { maxDiffPixelRatio: 0.05 },
+      SNAPSHOT_OPTIONS,
     );
   });
 });

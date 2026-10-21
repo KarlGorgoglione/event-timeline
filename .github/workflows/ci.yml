@@ -17,13 +17,13 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: pnpm
@@ -43,8 +43,11 @@ jobs:
       - name: Size budgets
         run: pnpm size
 
-      - name: Unit tests
-        run: pnpm test
+      - name: API reference builds
+        run: pnpm docs:api
+
+      - name: Unit tests (with coverage thresholds)
+        run: pnpm test:coverage
 
       - name: Resolve Playwright version
         id: playwright
@@ -52,24 +55,31 @@ jobs:
 
       - name: Cache Playwright browsers
         id: playwright-cache
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
         with:
           path: ~/.cache/ms-playwright
           key: ${{ runner.os }}-playwright-${{ steps.playwright.outputs.version }}
 
       - name: Install Playwright browsers
-        run: pnpm exec playwright install --with-deps chromium
+        run: pnpm exec playwright install --with-deps chromium firefox webkit
 
       - name: E2E tests
-        run: pnpm test:e2e
-        # GitHub's shared runners are ~1ms noisier than the §13 base budget at
-        # 10k events (measured 16–17.5ms vs the 16ms gate), so the strict gate
-        # flakes here while passing locally. perf.spec.ts exposes PERF_TOLERANCE_MS
-        # for exactly this: widen the CI gate enough to absorb runner variance
-        # while still catching real regressions (a true regression is many ms).
-        # Local runs keep the strict 16ms budget (no tolerance).
-        env:
-          PERF_TOLERANCE_MS: '4'
+        # Frame budgets are not gated here: shared runners are too noisy for a
+        # 16 ms budget. They run nightly on main (perf.yml), compared run to run.
+        run: >
+          pnpm exec playwright test --project interaction
+          --project interaction-firefox --project interaction-webkit
+          --project golden
+
+      # Traces, diffs and actual screenshots of failed specs, for debugging (a
+      # golden mismatch's *-actual.png is the would-be Linux baseline).
+      - name: Upload Playwright results
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: playwright-results
+          path: test-results/
+          retention-days: 7
 
   # Build the Vite demo and publish it to GitHub Pages. Gated on `verify` so a
   # broken demo never goes live, and limited to pushes on `main` (skips PRs and
@@ -85,13 +95,13 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v6
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: 22
           cache: pnpm
@@ -106,14 +116,18 @@ jobs:
         env:
           DEMO_BASE: /event-timeline/
 
+      # The API reference is served with the demo at /event-timeline/api/.
+      - name: Build API reference
+        run: pnpm docs:api && cp -r docs/api examples/demo/dist/api
+
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
 
       - name: Upload demo artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
         with:
           path: examples/demo/dist
 
       - name: Deploy to GitHub Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4.0.5

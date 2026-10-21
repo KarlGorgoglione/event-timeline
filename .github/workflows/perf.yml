@@ -1,0 +1,82 @@
+name: Perf
+
+# Nightly frame-budget benchmarks (DESIGN.md §13, audit T-05). Timings on
+# shared runners are too noisy to gate every pull request, so the budgets run
+# here instead, once a night on main, and each run is compared with the last
+# successful one: a scenario that got >20% and >1 ms slower fails the run.
+#
+# Set the PERF_RUNNER repository variable to the label of a dedicated runner
+# to make the numbers stable night to night; give that runner a GPU and the
+# perf-gpu project also asserts Gate 2 (50k events at 60 fps on WebGL2). On a
+# runner without hardware WebGL2 the perf-gpu scenarios skip themselves.
+
+on:
+  schedule:
+    - cron: '30 2 * * *'
+  workflow_dispatch:
+    inputs:
+      accept:
+        description: Record this run as the new baseline without comparing
+        type: boolean
+        default: false
+
+concurrency:
+  group: perf
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  actions: read # download the previous run's results
+
+jobs:
+  perf:
+    runs-on: ${{ vars.PERF_RUNNER || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: main
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Benchmarks
+        run: pnpm exec playwright test --project perf --project perf-gpu --workers=1
+        env:
+          PERF_OUTPUT: perf-results/perf.jsonl
+
+      - name: Fetch the last successful run's results
+        if: ${{ !inputs.accept }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          id=$(gh run list --workflow perf.yml --branch main --status success \
+            --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -n "$id" ]; then
+            gh run download "$id" --name perf-results --dir perf-baseline || true
+          fi
+
+      - name: Compare with the last run
+        if: ${{ !inputs.accept }}
+        run: >
+          node --experimental-strip-types scripts/perf-compare.mjs
+          perf-baseline/perf.jsonl perf-results/perf.jsonl
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: perf-results
+          path: perf-results/
+          retention-days: 90

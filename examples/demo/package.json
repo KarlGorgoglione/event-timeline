@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@event-timeline/core": "workspace:*",
     "@event-timeline/react": "workspace:*",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

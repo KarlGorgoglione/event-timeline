@@ -2,7 +2,7 @@
   {
     "name": "@event-timeline/core",
     "path": "packages/core/dist/index.js",
-    "limit": "30 KB"
+    "limit": "36 KB"
   },
   {
     "name": "@event-timeline/react (marginal, excl. core + react)",

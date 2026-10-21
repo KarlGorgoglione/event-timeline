@@ -12,11 +12,15 @@ test-results/
 blob-report/
 .playwright/
 
-# tooling/runtime state (not part of the project)
-.superpowers/
-
 # misc
 .DS_Store
 *.log
 .vite/
 .cache/
+
+# Perf benchmark output (PERF_OUTPUT)
+perf-results/
+perf-baseline/
+
+# Generated API reference (pnpm docs:api)
+docs/api/

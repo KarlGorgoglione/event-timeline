@@ -1,25 +1,20 @@
 // The backend-free Renderer seam (DESIGN.md §4).
 //
-// The swappable-backend promise only holds if the seam is an explicit,
-// backend-free interface: it exposes only primitive draw verbs in DEVICE pixels
-// and leaks no Canvas2D-specific type, so a future WebGLRenderer is
-// substitutable without engine changes (LSP). The engine never imports
-// CanvasRenderingContext2D.
-//
-// The full §4 interface is declared now so the seam is stable across phases.
-// Phase 1 uses drawLines / drawText; the arrow/node/image verbs are typed here
-// and implemented (as no-ops) by Canvas2DRenderer until Phase 2.
+// A Renderer draws one canvas layer. It exposes only primitive draw verbs in
+// DEVICE pixels and leaks no Canvas2D or WebGL type, so backends (and headless
+// or test renderers) are interchangeable without engine changes. Batches carry
+// their geometry in reusable typed arrays — only the first `count` entries are
+// valid — so a frame allocates nothing per primitive, and a GPU backend can
+// upload the arrays as they are.
 
-export type Layer = 'base' | 'overlay';
-
-/** The concrete backend behind the seam (§4). */
+/** The built-in backends (§4). */
 export type RendererBackend = 'canvas2d' | 'webgl';
 
 /**
- * Host preference for backend selection (§4, §16). `'auto'` (the default)
+ * Host preference for the base layer's backend (§4). `'auto'` (the default)
  * picks WebGL2 when it is hardware-accelerated and falls back to Canvas2D;
  * `'webgl'` forces WebGL2 whenever the API exists (even software-rendered);
- * `'canvas2d'` skips probing entirely.
+ * `'canvas2d'` skips WebGL entirely. The overlay layer is always Canvas2D.
  */
 export type RendererPreference = 'auto' | RendererBackend;
 
@@ -28,76 +23,64 @@ export interface TextMetricsLite {
   width: number;
 }
 
-// All coordinates and sizes in these batches are already in DEVICE pixels:
-// the engine converts Camera CSS-px output via dpr and integer-snaps before
-// building them (§3 DPR convention).
-
-export interface LineSegment {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-}
-
-/** Lines sharing one colour/width/dash, drawn as a single path (§4 batch-by-style). */
+/**
+ * Line segments sharing one colour, width and dash: `coords` holds
+ * `x1, y1, x2, y2` per segment. When `joins[i]` is 1, segment `i` continues
+ * the previous one (a polyline), so backends draw a join instead of two
+ * separate caps.
+ */
 export interface LineBatch {
   color: string;
   width: number;
-  /**
-   * Dash pattern in DEVICE pixels (already dpr-scaled, §3). Omitted or empty
-   * means a solid line; the backend resets its dash state afterwards so it never
-   * bleeds into the next batch.
-   */
-  dash?: number[];
-  segments: LineSegment[];
+  /** Dash pattern in device px; omitted or empty means solid. */
+  dash?: readonly number[];
+  coords: Float32Array;
+  joins?: Uint8Array;
+  count: number;
 }
 
-export interface TextItem {
-  x: number;
-  y: number;
-  text: string;
+/** Filled circles sharing one colour and radius: `coords` holds `x, y`. */
+export interface NodeBatch {
+  color: string;
+  radius: number;
+  coords: Float32Array;
+  count: number;
 }
 
+/**
+ * Filled triangles sharing one colour and size: `coords` holds `x, y, angle`
+ * — the anchor (base centre) and the direction the tip points, in radians.
+ */
+export interface ArrowheadBatch {
+  color: string;
+  size: number;
+  coords: Float32Array;
+  count: number;
+}
+
+/** Text runs sharing one colour, font and alignment. */
 export interface TextBatch {
   color: string;
   font: string;
   baseline: 'top' | 'middle' | 'alphabetic';
   align: 'left' | 'center' | 'right';
-  items: TextItem[];
+  xs: Float32Array;
+  ys: Float32Array;
+  texts: readonly string[];
+  count: number;
 }
 
-// --- Phase 2 batch shapes (typed now to keep the seam stable) ---
-
-export interface ArrowheadItem {
-  x: number;
-  y: number;
-  /** Direction the arrowhead points, in radians. */
-  angle: number;
-}
-
-export interface ArrowheadBatch {
+/** Filled rectangles sharing one colour: `coords` holds `x, y, w, h`. */
+export interface RectBatch {
   color: string;
-  size: number;
-  items: ArrowheadItem[];
-}
-
-export interface NodeItem {
-  x: number;
-  y: number;
-}
-
-export interface NodeBatch {
-  color: string;
-  radius: number;
-  items: NodeItem[];
+  coords: Float32Array;
+  count: number;
 }
 
 /**
- * An opaque, backend-specific image handle (§4, §16). The seam treats element
- * icons as black boxes so it leaks no DOM type: `Canvas2DRenderer` narrows this
- * to a `CanvasImageSource`, while a future `WebGLRenderer` would upload it as a
- * texture. Engine-internal icon code (the icon cache) supplies `HTMLImageElement`,
- * which widens to this handle at the snap boundary.
+ * An opaque image handle (§4). The seam treats icons as black boxes so it
+ * leaks no DOM type: the Canvas2D backend narrows it to a `CanvasImageSource`,
+ * the WebGL backend uploads it as a texture.
  */
 export type RendererImage = unknown;
 
@@ -109,16 +92,19 @@ export interface ImageItem {
 }
 
 export interface ImageBatch {
-  items: ImageItem[];
+  items: readonly ImageItem[];
 }
 
 export interface Renderer {
-  /** Which backend this instance is (§4) — e.g. for host diagnostics. */
-  readonly backend: RendererBackend;
+  /** Which backend this is (`'canvas2d'`, `'webgl'`, or a custom name). */
+  readonly backend: string;
   resize(deviceWidth: number, deviceHeight: number): void;
-  /** Clear/prepare a layer for drawing. */
-  beginFrame(layer: Layer): void;
-  /** Fill a device-px rectangle with a solid colour (e.g. the header mask, §4). */
+  /**
+   * Start a frame: clear to `clearColor` (the theme background for the base
+   * layer), or to transparent when `null` (the overlay).
+   */
+  beginFrame(clearColor: string | null): void;
+  /** Fill one device-px rectangle (e.g. the header mask, §4). */
   fillRect(
     x: number,
     y: number,
@@ -126,6 +112,7 @@ export interface Renderer {
     height: number,
     color: string,
   ): void;
+  drawRects(batch: RectBatch): void;
   drawLines(batch: LineBatch): void;
   drawArrowheads(batch: ArrowheadBatch): void;
   drawNodes(batch: NodeBatch): void;
@@ -133,7 +120,17 @@ export interface Renderer {
   drawImages(batch: ImageBatch): void;
   /** Caller caches results (§4). */
   measureText(text: string, font: string): TextMetricsLite;
-  endFrame(layer: Layer): void;
-  /** Release backend resources (GPU memory, listeners). Optional: Canvas2D has none. */
+  endFrame(): void;
+  /** Release backend resources (GPU memory, listeners). */
   dispose?(): void;
+}
+
+/**
+ * Renderers for the two layers, supplied by the host instead of a backend
+ * preference: for headless rendering, tests, or a custom backend. The engine
+ * then creates no canvases of its own.
+ */
+export interface RendererLayers {
+  base: Renderer;
+  overlay: Renderer;
 }

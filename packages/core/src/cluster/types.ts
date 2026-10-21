@@ -1,10 +1,9 @@
 // Event collapsing / clustering contract (DESIGN.md §6).
 //
 // At low zoom many events fall within a few pixels and become unreadable. A
-// `ClusterStrategy` assigns each event a stable key for the current zoom; events
-// that share a key AND render within `minSeparationPx` of each other collapse
-// into one count marker. Keeping this a pluggable interface (like `LayoutStrategy`,
-// §7) lets hosts supply their own keying without forking the engine (OCP).
+// `ClusterStrategy` assigns each event a key for the current zoom; events that
+// share a key AND fall within `minSeparationPx` of the first event of their
+// run collapse into one count marker. Hosts can supply their own keying.
 
 import type { Time, TimelineEvent } from '../model/types';
 
@@ -16,19 +15,11 @@ export interface ClusterContext {
   timeToScreenX(t: Time): number;
 }
 
-export interface ClusterStrategy {
+export interface ClusterStrategy<TData = unknown> {
   /**
-   * Stable grouping key for an event at the current zoom. Events sharing a key
-   * and within `minSeparationPx` collapse into one marker; pure, no side effects.
+   * Grouping key for an event at the current zoom. Events sharing a key and
+   * within `minSeparationPx` collapse into one marker. Pure, no side effects;
+   * numbers are cheaper than strings.
    */
-  key(event: TimelineEvent, ctx: ClusterContext): string;
-}
-
-/**
- * A run of one or more events that render as a unit. A single-event cluster is
- * "un-clustered" — the renderer draws it as an ordinary arrow; a multi-event
- * cluster draws a count marker (§6).
- */
-export interface Cluster<TData = unknown> {
-  events: TimelineEvent<TData>[];
+  key(event: TimelineEvent<TData>, ctx: ClusterContext): string | number;
 }

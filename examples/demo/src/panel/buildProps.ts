@@ -14,7 +14,7 @@ import {
   type Formatters,
   type LayoutStrategy,
   type StyleResolvers,
-  type Theme,
+  type ThemeInput,
   type TimelineOptions,
 } from '@event-timeline/react';
 import type { FontValue } from './controls';
@@ -44,31 +44,41 @@ const CLUSTERS: Record<ClusterKey, ClusterStrategy> = {
 /** Serialise the structured font back to the CSS shorthand the theme expects. */
 const font = (f: FontValue): string => `${f.size}px ${f.family}`;
 
-export function buildTheme(t: ThemeConfig): Partial<Theme> {
+export function buildTheme(t: ThemeConfig): ThemeInput {
   return {
     background: t.background,
-    gridlineColor: t.gridlineColor,
-    gridlineWidth: t.gridlineWidth,
-    gridlineDash: t.gridlineDash,
-    headerTextColor: t.headerTextColor,
-    headerFont: font(t.headerFont),
-    headerHeight: t.headerHeight,
-    headerMajorTickRatio: t.headerMajorTickRatio,
-    headerMinorTickRatio: t.headerMinorTickRatio,
-    rowHeight: t.rowHeight,
-    rowGap: t.rowGap,
-    labelPadding: t.labelPadding,
-    lineLeadPadding: t.lineLeadPadding,
-    markerGap: t.markerGap,
-    eventLabelGap: t.eventLabelGap,
-    hoverColor: t.hoverColor,
-    selectionColor: t.selectionColor,
-    hoverWidthBonus: t.hoverWidthBonus,
-    selectionWidthBonus: t.selectionWidthBonus,
-    emphasisRadiusBonus: t.emphasisRadiusBonus,
-    clusterColor: t.clusterColor,
-    clusterTextColor: t.clusterTextColor,
-    clusterMarkerBonus: t.clusterMarkerBonus,
+    grid: {
+      color: t.gridlineColor,
+      width: t.gridlineWidth,
+      dash: t.gridlineDash,
+    },
+    header: {
+      height: t.headerHeight,
+      textColor: t.headerTextColor,
+      font: font(t.headerFont),
+      majorTickRatio: t.headerMajorTickRatio,
+      minorTickRatio: t.headerMinorTickRatio,
+    },
+    layout: {
+      rowHeight: t.rowHeight,
+      rowGap: t.rowGap,
+      edgePadding: t.labelPadding,
+      lineLead: t.lineLeadPadding,
+      markerGap: t.markerGap,
+      eventLabelGap: t.eventLabelGap,
+    },
+    emphasis: {
+      hoverColor: t.hoverColor,
+      selectionColor: t.selectionColor,
+      hoverWidthBonus: t.hoverWidthBonus,
+      selectionWidthBonus: t.selectionWidthBonus,
+      radiusBonus: t.emphasisRadiusBonus,
+    },
+    cluster: {
+      color: t.clusterColor,
+      textColor: t.clusterTextColor,
+      markerBonus: t.clusterMarkerBonus,
+    },
     rowSeparator: { ...t.rowSeparator },
     element: {
       lineColor: t.element.lineColor,

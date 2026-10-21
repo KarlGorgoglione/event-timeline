@@ -50,3 +50,55 @@ export function summarize(values: readonly number[], warmup = 0): PerfSummary {
     p95: quantile(sample, 0.95),
   };
 }
+
+/** One measured scenario as the perf spec records it (§13). */
+export interface PerfRecord {
+  /** The backend that drew the base layer. */
+  backend: string;
+  scenario: string;
+  baseMedian: number;
+  baseP95: number;
+  overlayMedian: number;
+  overlayP95: number;
+  /** p95 wall-clock interval between animation frames while redrawing, ms. */
+  cadenceP95: number;
+}
+
+export interface PerfRegression {
+  key: string;
+  metric: 'baseMedian' | 'overlayMedian';
+  baseline: number;
+  current: number;
+}
+
+/**
+ * Scenarios that got slower than the baseline run by more than `ratio` and
+ * by more than `minMs` — both, so jitter on a fast scenario doesn't fail the
+ * run. Scenarios missing from either run are ignored.
+ */
+export function findRegressions(
+  baseline: readonly PerfRecord[],
+  current: readonly PerfRecord[],
+  { ratio = 0.2, minMs = 1 }: { ratio?: number; minMs?: number } = {},
+): PerfRegression[] {
+  const key = (r: PerfRecord) => `${r.backend}/${r.scenario}`;
+  const before = new Map(baseline.map((r) => [key(r), r]));
+  const regressions: PerfRegression[] = [];
+  for (const record of current) {
+    const previous = before.get(key(record));
+    if (previous === undefined) continue;
+    for (const metric of ['baseMedian', 'overlayMedian'] as const) {
+      const was = previous[metric];
+      const now = record[metric];
+      if (now > was * (1 + ratio) && now - was > minMs) {
+        regressions.push({
+          key: key(record),
+          metric,
+          baseline: was,
+          current: now,
+        });
+      }
+    }
+  }
+  return regressions;
+}

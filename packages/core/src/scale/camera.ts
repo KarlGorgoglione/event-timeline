@@ -6,16 +6,27 @@
 // cleanly. All math is in CSS pixels; the renderer applies DPR (§3).
 
 import type { Time } from '../model/types';
+import { DAY_MS } from '../model/time';
 import type { Extent } from '../model/extent';
 
 /** One day in milliseconds; the unit for day-width-derived zoom limits. */
-export const DAY_MS = 86_400_000;
 
 /** Default window spanned when the data extent is empty or degenerate (§3.1). */
 export const DEFAULT_WINDOW_MS = 30 * DAY_MS;
 
-/** Max useful day width (CSS px); drives `maxPxPerMs`. */
-export const MAX_DAY_WIDTH_PX = 4000;
+/**
+ * Default deepest zoom: 20 CSS px per minute (28,800 px per day), where the
+ * header shows minute ticks.
+ */
+export const DEFAULT_MAX_PX_PER_MS = 20 / 60_000;
+
+/** Host zoom limits, in CSS px per ms (see `TimelineOptions.zoom`). */
+export interface ZoomLimits {
+  /** Deepest zoom-out: a px/ms value, or `'fit'` (the whole data extent). */
+  min?: number | 'fit';
+  /** Deepest zoom-in, in px/ms. */
+  max?: number;
+}
 
 export interface CameraState {
   /** Time mapped to the left edge of the viewport (screen x = 0). */
@@ -73,10 +84,15 @@ export class Camera {
   private _state: CameraState;
 
   constructor(
-    private readonly metrics: RowMetrics,
+    private metrics: RowMetrics,
     initial: Partial<CameraState> = {},
   ) {
     this._state = { ...DEFAULT_STATE, ...initial };
+  }
+
+  /** Swap the row metrics (a theme change); the scroll offset is kept. */
+  setMetrics(metrics: RowMetrics): void {
+    this.metrics = metrics;
   }
 
   get state(): Readonly<CameraState> {
@@ -98,6 +114,16 @@ export class Camera {
     return headerHeight + row * (rowHeight + rowGap) - this._state.scrollY;
   }
 
+  /** The on-screen width of a duration, CSS px. */
+  durationToPx(ms: number): number {
+    return ms * this._state.pxPerMs;
+  }
+
+  /** The duration a screen width spans, ms. */
+  pxToDuration(px: number): number {
+    return px / this._state.pxPerMs;
+  }
+
   screenYToRow(y: number): number {
     const { headerHeight, rowHeight, rowGap } = this.metrics;
     return (y + this._state.scrollY - headerHeight) / (rowHeight + rowGap);
@@ -107,6 +133,11 @@ export class Camera {
 
   setOriginTime(t: Time): void {
     this._state.originTime = t;
+  }
+
+  /** Pan (keeping the zoom) so time `t` lands at screen x `screenX`. */
+  placeTimeAt(t: Time, screenX: number): void {
+    this._state.originTime = t - screenX / this._state.pxPerMs;
   }
 
   setScrollY(y: number): void {
@@ -187,15 +218,43 @@ export function computeZoomBounds(
   viewport: Viewport,
   now: Time,
   inset: FitInset = {},
+  limits: ZoomLimits = {},
 ): ZoomBounds {
   const eff = effectiveExtent(extent, now);
   const span = eff.maxTime - eff.minTime;
-  const maxPxPerMs = MAX_DAY_WIDTH_PX / DAY_MS;
-  // The zoom-out limit must permit the inset-aware fit level (below), so it is
+  const maxPxPerMs = limits.max ?? DEFAULT_MAX_PX_PER_MS;
+  // The 'fit' limit must permit the inset-aware fit level (below), so it is
   // derived from the usable width, not the full viewport — otherwise a later
   // setPxPerMs would clamp the fitted zoom back up and undo the inset.
-  const minPxPerMs = usableFitWidth(viewport, inset) / span;
-  return { minPxPerMs, maxPxPerMs };
+  const fitPxPerMs = usableFitWidth(viewport, inset) / span;
+  const min =
+    typeof limits.min === 'number' && limits.min > 0 ? limits.min : fitPxPerMs;
+  return { minPxPerMs: Math.min(min, maxPxPerMs), maxPxPerMs };
+}
+
+/**
+ * Keep the visible window on the data (`TimelineOptions.pan.bounds: 'data'`):
+ * the window may not leave the (degenerate-safe) extent plus the insets, and
+ * a window wider than that is aligned to its start.
+ */
+export function clampOriginToExtent(
+  camera: Camera,
+  extent: Extent | null,
+  viewport: Viewport,
+  now: Time,
+  inset: FitInset = {},
+): void {
+  const eff = effectiveExtent(extent, now);
+  const { pxPerMs } = camera.state;
+  const min = eff.minTime - (inset.left ?? 0) / pxPerMs;
+  const max = eff.maxTime + (inset.right ?? 0) / pxPerMs;
+  const visible = viewport.cssWidth / pxPerMs;
+  const origin = camera.state.originTime;
+  if (visible >= max - min) {
+    camera.setOriginTime(min);
+    return;
+  }
+  camera.setOriginTime(Math.min(Math.max(origin, min), max - visible));
 }
 
 /**
@@ -211,16 +270,43 @@ export function fit(
   viewport: Viewport,
   now: Time,
   inset: FitInset = {},
+  limits: ZoomLimits = {},
 ): void {
   const eff = effectiveExtent(extent, now);
   const span = eff.maxTime - eff.minTime;
   camera.setPxPerMs(
     usableFitWidth(viewport, inset) / span,
-    computeZoomBounds(extent, viewport, now, inset),
+    computeZoomBounds(extent, viewport, now, inset, limits),
   );
   // Place the extent start at the left inset using the *clamped* pxPerMs:
   // originTime is the time at screen x=0, so back off the inset's worth of time.
   const left = inset.left ?? 0;
   camera.setOriginTime(eff.minTime - left / camera.state.pxPerMs);
   camera.setScrollY(0);
+}
+
+/**
+ * CSS px to reserve left of the data start when fitting, so every start
+ * marker stays on screen (§1). An element whose line starts `offsetMs` after
+ * the data start, where the fit zoom puts it `offsetPx` right of it, needs
+ * `fixedPx + contentWidth − offsetPx`.
+ */
+export function fitInsetLeft(
+  fixedPx: number,
+  markers: readonly { offsetMs: number; contentWidth: number }[],
+  viewportWidth: number,
+  spanMs: number,
+): number {
+  let inset = 0;
+  // Two passes: the inset shrinks the usable width, which shrinks the zoom
+  // and so the offsets; the second pass uses the zoom the first inset implies.
+  for (let pass = 0; pass < 2; pass++) {
+    const pxPerMs = Math.max(1, viewportWidth - inset) / spanMs;
+    let need = 0;
+    for (const { offsetMs, contentWidth } of markers) {
+      need = Math.max(need, fixedPx + contentWidth - offsetMs * pxPerMs);
+    }
+    inset = Math.min(need, viewportWidth / 2);
+  }
+  return Math.max(0, inset);
 }

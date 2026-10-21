@@ -7,9 +7,8 @@ import type { AmlPattern, DemoDatum } from './synthetic';
 
 // A deterministic client/counterparty transaction-monitoring dataset (~100
 // entities, ~500 payments) with four labelled AML patterns embedded in it
-// (DESIGN.md §11/§12 customisation surfaces; spec
-// docs/superpowers/specs/2026-06-05-aml-scenario-design.md). A seeded PRNG keeps
-// it reproducible across the demo and the unit tests.
+// (DESIGN.md §11/§12 customisation surfaces). A seeded PRNG keeps it
+// reproducible across the demo and the unit tests.
 
 const DAY_MS = 86_400_000;
 const YEAR_MS = 365 * DAY_MS;

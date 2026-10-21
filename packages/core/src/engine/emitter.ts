@@ -1,26 +1,27 @@
 // Typed pub/sub for engine events (DESIGN.md §9).
 //
-// The full event map is typed so on/off are checked against each event's
-// payload type. Phase 1 only EMITS viewportChange, ready, and dataChange; the
-// hover/click/selection events are part of the contract but fire from Phase 3.
+// The event map is typed so `on`/`off` are checked against each event's
+// payload type.
 
 import type { HitResult } from '../interaction/hit';
+import type { Selection } from '../interaction/selection';
+import type { DataChangeCounts } from '../model/store';
+import type { ViewportState } from './view';
 
 export interface TimelineEventMap<TData = unknown> {
-  viewportChange: {
-    timeRange: [number, number];
-    scrollY: number;
-    pxPerMs: number;
-    visibleRowRange: [number, number];
-  };
+  /** The visible window changed; emitted at most once per frame. */
+  viewportChange: ViewportState;
   hover: HitResult<TData> | null;
   click: {
     hit: HitResult<TData>;
     modifiers: { ctrlOrMeta: boolean; shift: boolean };
   };
-  selectionChange: { ids: string[] };
-  dataChange: { added: number; removed: number; updated: number };
+  selectionChange: Selection;
+  dataChange: DataChangeCounts;
+  /** The engine is constructed and its API usable (a microtask after `new`). */
   ready: void;
+  /** The first base frame has been drawn. */
+  firstFrame: void;
 }
 
 type Listener<T> = (payload: T) => void;
